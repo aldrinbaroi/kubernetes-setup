@@ -1,0 +1,586 @@
+#!/bin/bash 
+#
+# Script to setup Kubernetes master & slave 
+#
+# author: Aldrin Baroi
+# 
+#
+
+readonly DEFAULT_LOG_DIR="/var/log"
+readonly DEFAULT_LOG_FILE_NAME="setup-kubernetes.log"
+readonly DEFAULT_LOG_TAG="K8S Setup"
+
+readonly PREREQUISTE_PACKAGES="openssh-server socat"
+readonly NET_FILTER_MODULE_NAME="br_netfilter"
+readonly SETUP_CONFIG_FILE="setup-kubernetes.conf"
+readonly KSLAVE_NODE_CLUSTER_JOIN_COMMNAD_FILE="kslave-cluster-join-command"
+readonly KDASHBOARD_LOGIN_INFO_FILE="kubernetes-dashboard-login.info"
+
+
+readonly VALID_USER=1
+readonly INVALID_USER=0
+readonly TRUE=1
+readonly FALSE=0
+readonly ERROR=1
+readonly OK=0
+
+LOG_DIR="${DEFAULT_LOG_DIR}"
+LOG_FILE="${LOG_DIR}/{${DEFAULT_LOG_FILE_NAME}"
+LOG_TAG="${DEFAULT_LOG_TAG}"
+LOG_TAG="${DEFAULT_LOG_TAG}"
+
+KADMIN_USER="notset"
+KADMIN_USER_GROUP="notset"
+KADMIN_USER_HOME="notset"
+KNODE_TYPE="noset"
+KNODE_NAME=""
+KNODE_IFACE=""
+KNODE_IP=""
+KMASTER_NODE="notset"
+KSLAVE_NODES="notset"
+
+LOG=TRUE
+
+## GATEWAY_IP_ADDRESS=10.0.0.1 #172.16.0.1
+## KMASTER_IP_ADDRESS=10.0.1.201 #172.16.0.2
+## CALICO_NETWORK_CIDR=192.168.0.0/16
+## CALICO_YAML_URL="https://docs.projectcalico.org/v3.8/manifests/calico.yaml"
+## KUBERNETES_DASHBOARD_YAML_URL="https://raw.githubusercontent.com/kubernetes/dashboard/v1.10.0/src/deploy/recommended/kubernetes-dashboard.yaml"
+## KUBERNETES_REPO_URL="https://packages.cloud.google.com/yum/repos/kubernetes-el7-x86_64"
+## KUBERNETES_REPO_GPG_KEY_URLS="https://packages.cloud.google.com/yum/doc/yum-key.gpg https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg" 
+
+function show_usage
+{
+        local msg=$1
+        if [ ! -z "$msg" ]; then
+                echo " "
+                echo "${msg}"
+                echo " "
+        fi
+        echo " "
+        echo "setup-kubernetes"
+        echo " "
+        echo "  setup-kubernetes -s -t node-type -n node-name [-i node-iface -a node-ip] -u node-user [-d log-dir] | -h"
+        echo "    -s              Setup kubernetes node"
+        echo "    -t node-type    Kubernetes node type [master|slave]"
+	echo "    -n node-name    Set Kubernetes node's host name"
+	echo "    -i node-iface   Set Kubernetes node's ip address for the specified interface"
+	echo "    -a node-ip          - provide IP address & netmask:  Ex:  172.16.0.2/255.255.0.0"
+        echo "    -u node-user    Kubernetes node user other than 'root'"
+	echo "    -d log-dir      Overrides default setup log directory"
+        echo "    -h              Show this usage text"
+        echo " "
+}
+
+function set_log_tag
+{
+        LOG_TAG=$1
+}
+
+function new_log_file
+{
+	local backupLogFile=""
+	if [ -f "${LOG_FILE}" ]; then
+		backupLogFile="${LOG_FILE}-$(ls --full-time ${LOG_FILE} | awk '{ print $6"_"$7 }' | sed 's/[.].*$//')"
+		if (( $(cp ${LOG_FILE} ${backupLogFile}; echo $?) )); then
+			echo "WARN: filed to create backup of the previous log file"
+		fi
+	fi
+	if (( $(cat /dev/null > ${LOG_FILE}; echo $?) )); then
+		echo "Failed to create/clear the log file [${LOG_FILE}]"
+		echo "Exiting..."
+		exit 1
+	fi
+}
+
+function log_enable
+{
+	LOG=TRUE
+}
+
+function log_disable
+{
+	LOG=FALSE
+}
+
+function log
+{
+	if (( LOG )); then
+		echo -e "${1}" | tee >(awk -F "@@" -v prefix="$(date '+%b %d %H:%M:%S') $(hostname) [${LOG_TAG}]: " '{print prefix $1}'  >> ${LOG_FILE}) #| logger  -t "[${LOG_TAG}]"
+	else
+		echo -e "${1}" 
+	fi 
+}
+
+function log_pipe
+{
+        while read message; do
+                log "${message}"
+        done
+}
+
+function abort
+{
+        log "${1}"
+        log "Aborting..."
+        exit 1
+}
+
+function exeCmd
+{
+        cmd=$1
+        if [ ! -z "${cmd}" ]; then
+                bash -c "${cmd}" 2>&1 | log_pipe
+        fi
+}
+
+function exeCmd_asAdminUser
+{
+        cmd=$1
+        if [ ! -z "${cmd}" ]; then
+                runuser -l ${KADMIN_USER} -c "${cmd}" 2>&1 | log_pipe
+        fi
+} 
+
+function load_setup_configuration
+{
+	if [ ! -f "${SETUP_CONFIG_FILE}" ]; then
+		abort "Setup configration file [${SETUP_CONFIG_FILE}] not found in the current directory."
+	fi
+	source ${SETUP_CONFIG_FILE} > /dev/null 2>&1
+	if (( $? )); then
+		abort "Failed to load setup configuration from [${SETUP_CONFIG_FILE}] file"
+	fi
+} 
+
+function install_required_tool__jq
+{
+	if (( $(which jq > /dev/null 2>&1; echo $?) )); then
+                log "JQ is not installed.  Installting it..."
+		if (( $(yum install -y jq > /dev/null 2>&1; echo $?) )); then
+                        log "Failed to install.  Adding EPEL repo..."
+			if (( $(yum install -y epel-release > /dev/null 2>&1; echo $?) == OK )); then
+                                log "EPEL repo added.  installing [JQ]..."
+				if (( $(yum install -y jq > /dev/null 2>&1; echo $?) )); then
+                                        abort "Failed to install required tool [JQ]"
+				else
+					log "Successfully installed [JQ]"
+                                fi
+			else
+				abort "Failed to add EPEL repo to install [JQ]"
+                        fi
+		else
+			log "Successfully installed [JQ]"
+                fi
+	else
+		log "JQ is already installed"
+        fi
+}
+
+function install_required_tool___ifconfig
+{
+	if (( $(which ifconfig > /dev/null 2>&1; echo $?) )); then
+                log "ifconfig is not installed.  Installting it..."
+		if (( $(yum install -y net-tools > /dev/null 2>&1; echo $?) )); then
+                        abort "Failed to install ifconfig"
+		else
+			log "Successfully installed ifconfig"
+		fi
+	else
+		log "ifconfig is already installed"
+	fi
+}
+
+function prepare_system__set_hostname
+{
+	if [[ ! -z "${KNODE_NAME}" ]]; then
+		hostnamectl set-hostname ${KNODE_NAME}
+	fi
+}
+
+function prepare_system__set_ip_address
+{
+	local ipAddress
+	local netmask
+	local ifcfgFile="/etc/sysconfig/network-scripts/ifcfg-${KNODE_IFACE}"
+	if [[ ! -z "${KNODE_IFACE}" ]] && [[ ! -z "${KNODE_IP}" ]]; then
+		ipAddress=$(echo ${KNODE_IP} | awk 'BEGIN {FS="/"}; {print $1}')
+		netmask=$(echo ${KNODE_IP} | awk 'BEGIN {FS="/"}; {print $2}')
+		# ifconfig ${KNODE_IFACE} ${KNODE_IP_ADDRESS} ${KNODE_IP_NETMASK}
+		if [[ ! -z "${ipAddress}" ]] && [[ ! -z "${netmask}" ]]; then
+			exeCmd "sed -i -r 's/(IPADDR=\")(.*)(\")/\1'${ipAddress}'\3/; s/(NETMASK=\")(.*)(\")/\1'${netmask}'\3/' ${ifcfgFile}"
+			exeCmd "systemctl restart network"
+		else
+			abort "Error both ip address & netmask be provided. Ex:  IP_ADDRESS/NET_MASKa 172.16.0.2/255.255.0.0"
+		fi
+	fi
+}
+
+function prepare_system__disable_selinux
+{
+	log " "
+	log "Disabling SELINUX system..."
+	exeCmd "setenforce 0"
+	exeCmd "sed -i s/^SELINUX=enforcing$/SELINUX=permissive/ /etc/selinux/config"
+}
+
+function prepare_system__enable_bridge_network
+{
+	log " "
+	log "Enabling bridge network... "
+	log "  Setting up to load netfilter module automatically..."
+	cat <<-EOF > /etc/modules-load.d/kubernetes.conf
+		${NET_FILTER_MODULE_NAME}
+		EOF
+	log "  Loading netfilter module..."
+	exeCmd "modprobe br_netfilter" 
+
+	log " "
+	log "  Enabling bridge network routing & ip forwarding..."
+	cat <<-EOF > /usr/lib/sysctl.d/99-zz_kubernetes.conf
+		net.bridge.bridge-nf-call-ip6tables = 1
+		net.bridge.bridge-nf-call-iptables = 1
+		net.ipv4.ip_forward = 1
+		EOF
+	#log "  Loading netfilter module..."
+	#exeCmd "modprobe br_netfilter" 
+	exeCmd "sysctl --system"
+}
+
+function prepare_system__disable_swap_space
+{
+	log " "
+	log "Disabling swap space..."
+	exeCmd "swapoff -a"
+	exeCmd "sed -i /swap/s/^/#***disabled-for-kubernetes***/ /etc/fstab"
+}
+
+function prepare_system__disable_firewall
+{
+	log " "
+	log "Disabling firewall..."
+	exeCmd "systemctl stop firewalld"
+	exeCmd "systemctl disable firewalld"
+	exeCmd "systemctl mask --now firewalld"
+}
+
+function prepare_system__install_required_tools
+{
+	log " "
+	log "Installing required tool [JQ]..."
+	install_required_tool__jq
+	install_required_tool__ifconfig
+	log " "
+	log "Installing required tool [IFCONFIG]..."
+}
+
+function prepare_system__update_hosts_file
+{
+	log " "
+	log "Updating [/etc/hosts] file with k8s master & slave node names..."
+	local hostName
+	local hostShortName
+	local hostIp
+	local hostEntry
+	local hostFile="/etc/hosts"
+	log "KMASTER_NODE = ${KMASTER_NODE}"
+	hostName=$(echo ${KMASTER_NODE} | jq -cr '.name')
+	if (( $? )); then abort "Failed to kmaster host name"; fi
+	hostShortName=$(echo ${hostName} | awk 'BEGIN { FS="." }; {print $1}')
+	if (( $? )); then abort "failed to kmaster host short name"; fi
+	hostIp=$(echo ${KMASTER_NODE} | jq -cr '.ipAddress')
+	if (( $? )); then abort "failed to kmaster ip address"; fi
+	hostEntry="${hostIp}\t${hostName}\t${hostShortName}"
+	log "${hostEntry}"
+	echo -e " "  >> ${hostFile}
+	echo -e "#<k8s Added by setup-kubernetes script on $(date)>"  >> ${hostFile}
+	echo -e "${hostEntry}" >> ${hostFile}
+	log "KSLAVE_NODES = ${KSLAVE_NODES}"
+	for node in $(echo ${KSLAVE_NODES} | jq -cr '.[]'); do
+		hostName=$(echo ${node} | jq -r ".name")
+		hostIp=$(echo ${node} | jq -r ".ipAddress")
+		hostShortName=$(echo ${hostName} | awk 'BEGIN { FS="." }; {print $1}')
+		hostEntry="${hostIp}\t${hostName}\t${hostShortName}" 
+		log "${hostEntry}"
+		echo -e "${hostEntry}" >> ${hostFile}
+	done 
+	echo -e "#</k8s>"  >> ${hostFile} 
+}
+
+function prepare_system__add_admin_user
+{
+	local encpw
+	log ""
+	log "Checking if K8S admin user [${KADMIN_USER}] exist"
+	if (( $(id -u ${KADMIN_USER} > /dev/null 2>&1; echo $?) )); then
+		log "${KADMIN_USER} user doesn't exist.  Adding the user with default password: ${KADMIN_USER}." 
+		encpw=$(openssl passwd -crypt ${KADMIN_USER})
+		if (( $? )); then
+			abort "Failed to generate encrypted passwd using openssl"
+		else
+			if (( $(useradd -m -p ${encpw} ${KADMIN_USER}; echo $?) )); then
+				abort "Failed to add admin user"
+			else
+				log "Added admin user successfully."
+			fi
+		fi
+	fi
+	KADMIN_USER_GROUP=${KADMIN_USER}
+	KADMIN_USER_HOME=$(getent passwd ${KADMIN_USER} | awk 'BEGIN {FS=":"}; {print $6}')
+}
+
+function prepare_system__update_installed_packages
+{
+	log "Updating already installed pacakges to the lates release."
+	if (( $(yum update -y; echo $?) )); then
+		log "WARN: Failed to update installed packages."
+	fi
+}
+
+function prepare_system
+{
+	log " "
+	log "Preparing the system..." 
+	prepare_system__set_hostname
+	prepare_system__set_ip_address
+	prepare_system__disable_selinux
+	prepare_system__enable_bridge_network
+	prepare_system__disable_swap_space
+	prepare_system__disable_firewall
+	prepare_system__install_required_tools
+	prepare_system__update_hosts_file
+	prepare_system__add_admin_user
+	prepare_system__update_installed_packages
+} 
+
+function install_prerequisite_packages
+{
+	log " "
+	log "Installing prerequisite packages"
+	exeCmd "yum update -y"
+	exeCmd "yum install -y ${PREREQUISTE_PACKAGES}"
+}
+
+function install_docker
+{
+	log 
+	log "Installing & starting Docker..."
+	exeCmd "yum install -y docker"
+	exeCmd "systemctl enable --now docker"
+	exeCmd "systemctl start docker"
+} 
+
+function setup_kubernetes_repository
+{
+	log " "
+	log "Setting up kubernetes repository..."
+	cat <<-EOF > /etc/yum.repos.d/kubernetes.repo
+		[kubernetes]
+		name=Kubernetes
+		baseurl=${KUBERNETES_REPO_URL}
+		enabled=1
+		gpgcheck=1
+		repo_gpgcheck=1
+		gpgkey=${KUBERNETES_REPO_GPG_KEY_URLS}
+		EOF
+} 
+
+function install_kubeadm_kubelet_kubectl
+{
+	log "Installing kubeadm, kubelet, kubectl.."
+	exeCmd "yum update -y"
+	exeCmd "yum install -y kubelet kubeadm kubectl --disableexcludes=kubernetes"
+	exeCmd "systemctl enable --now kubelet"
+	exeCmd "systemctl start kubelet"
+}
+
+function log_start_setup
+{
+	log "Kuberntest ${KNODE_TYPE} node setup started."
+} 
+
+function log_end_setup
+{
+	log " " 
+	log "Kuberntest ${KNODE_TYPE} node setup completed."
+}
+
+function setup_common_items
+{
+	prepare_system
+	install_prerequisite_packages
+	install_docker
+	setup_kubernetes_repository
+	install_kubeadm_kubelet_kubectl
+}
+
+function setup_dashboard
+{
+	log "Setting up Kubernetes dashboard"
+	exeCmd_asAdminUser "kubectl create -f ${KUBERNETES_DASHBOARD_YAML_URL}"
+	log "Creating service account for dashbaord"
+	exeCmd_asAdminUser "kubectl create serviceaccount dashboard -n default"
+	log "Adding cluster binding rules for roles on dashboard"
+	exeCmd_asAdminUser "kubectl create clusterrolebinding dashboard-admin -n default --clusterrole=cluster-admin --serviceaccount=default:dashboard"
+
+	log "Exposing dashboard on NodePort..."
+	exeCmd_asAdminUser "kubectl patch svc kubernetes-dashboard --type=json -p '[{\"op\":\"replace\",\"path\":\"/spec/type\",\"value\":\"NodePort\"}]' --namespace=kube-system"
+}
+
+function get_dashboard_url_and_login_token
+{
+	log " "
+	log "Getting kubernetes dashboard login url & token..."
+	local tmpFile="/tmp/${KDASHBOARD_LOGIN_INFO_FILE}"
+	echo "#" > ${tmpFile}
+	echo "# Kubernetes dashboard URL and login token" >> ${tmpFile}
+	echo "#" >> ${tmpFile}
+	echo " " >> ${tmpFile}
+	log " "
+	exeCmd_asAdminUser "k8sdbp=\$(kubectl -n kube-system get service kubernetes-dashboard --no-headers | awk '{print \$5}' | sed -r 's/(.*[:])([0-9]+)([/].*)/\\2/'); echo \"The dashboard can be accessed at https://${KMASTER_IP_ADDRESS}:\${k8sdbp}\" | tee -a ${tmpFile}"
+	echo " " >> ${tmpFile} 
+	log " "
+	exeCmd_asAdminUser "dblt=\$(kubectl get secret \$(kubectl get serviceaccount dashboard -o jsonpath='{.secrets[0].name}') -o jsonpath='{.data.token}' | base64 --decode); echo \"Dashboard login token: \${dblt}\" | tee -a ${tmpFile}"
+	cat ${tmpFile} > ${KDASHBOARD_LOGIN_INFO_FILE} 
+	rm -f ${tmpFile} > /dev/null 
+	log " "
+	log "Kubernetes dashboard URL and login token has been saved in ${KDASHBOARD_LOGIN_INFO_FILE} file"
+	log " "
+}
+
+function generate_slave_node_cluster_join_command
+{
+	cat /dev/null > ${KSLAVE_NODE_CLUSTER_JOIN_COMMNAD_FILE}
+	log " "
+	log "Generating slave node's cluster join command..."
+	log "Slave node's cluster join command:\n"
+	exeCmd "kslaveJoinCmd=\$(kubeadm token create --print-join-command); echo \${kslaveJoinCmd} | tee ${KSLAVE_NODE_CLUSTER_JOIN_COMMNAD_FILE}"
+	log "\nThe join command has been saved in the ${KSLAVE_NODE_CLUSTER_JOIN_COMMNAD_FILE} file"
+	log "Please copy this file over to the slave node before running Kubernetes slave node setup script."
+}
+
+function slave_node__join_cluster
+{
+	log "Executing cluster join command..."
+	local clusterJoinCmdFile="/root/${KSLAVE_NODE_CLUSTER_JOIN_COMMNAD_FILE}"
+	#exeCmd "chmod 755 ${clusterJoinCmdFile}"
+	#exeCmd "chown ${KADMIN_USER}:${KADMIN_USER_GROUP} ${clusterJoinCmdFile}"
+	exeCmd "bash ${clusterJoinCmdFile}; if (( \$? )); then echo 'Failed to join the cluster'; else echo 'Successfully joined the cluster'; fi"
+}
+
+function setup_master_node
+{
+	log_start_setup 
+	setup_common_items
+
+	log " "
+       	log "Initiating cluster..."
+	exeCmd "kubeadm init --pod-network-cidr=${CALICO_NETWORK_CIDR} --apiserver-advertise-address=${KMASTER_IP_ADDRESS}"
+	
+	log " "
+	log "Setting up KADMIN_USER (${KADMIN_USER}) environment to be able to user kubectl command"
+	exeCmd_asAdminUser "mkdir ${KADMIN_USER_HOME}/.kube"
+	exeCmd "cp /etc/kubernetes/admin.conf ${KADMIN_USER_HOME}/.kube/config"
+	exeCmd "chown -R ${KADMIN_USER}:${KADMIN_USER_GROUP} /home/${KADMIN_USER}/.kube/config"
+	
+	log "Setting up POD network"
+	exeCmd_asAdminUser "kubectl apply -f ${CALICO_YAML_URL}"
+
+	setup_dashboard
+	get_dashboard_url_and_login_token
+	generate_slave_node_cluster_join_command
+
+	log_end_setup 
+}
+
+
+function setup_slave_node
+{
+	log_start_setup 
+	setup_common_items
+	slave_node__join_cluster 
+	log_end_setup 
+}
+
+
+# __main__
+
+readonly OPTIONS=":bjst:n:i:a:u:d:h"
+getopts "${OPTIONS}" opt ${@}
+case $opt in
+	b)
+		log_disable
+	       	load_setup_configuration
+		get_dashboard_url_and_login_token
+		;;
+	j)
+		log_disable
+	       	load_setup_configuration
+		generate_slave_node_cluster_join_command
+		;;
+	s)
+	       	load_setup_configuration
+		nodeType=""
+		nodeUser=""
+                while getopts "${OPTIONS}" opt ${@}; do
+                        case $opt in
+                                t)
+                                        nodeType=${OPTARG}
+                                        ;;
+                                n)
+                                        nodeName=${OPTARG}
+                                        ;;
+                                i)
+                                        nodeIface=${OPTARG}
+                                        ;;
+                                a)
+                                        nodeIp=${OPTARG}
+                                        ;;
+                                u)
+                                        nodeUser=${OPTARG}
+                                        ;;
+                                d)
+                                        logDir=${OPTARG}
+                                        ;;
+				*)
+					show_usage "Invalid option(s) provided"
+                        esac
+                done 
+		KNODE_TYPE=${nodeType}
+		if [[ ! -z "${nodeName}" ]]; then
+			KNODE_NAME=${nodeName}
+		fi
+		if [[ ! -z "${nodeIface}" ]]; then
+			KNODE_IFACE=${nodeIface}
+		fi
+		if [[ ! -z "${nodeIp}" ]]; then
+			KNODE_IP=${nodeIp}
+		fi
+		if [[ ! -z "${nodeUser}" ]]; then
+			KADMIN_USER=${nodeUser}
+		fi
+		LOG_TAG="K8S ${KNODE_TYPE} Setup"
+		if [[ ! -z "${logDir}" ]]; then
+			LOG_DIR=${logDir}
+		fi
+		LOG_FILE="${LOG_DIR}/setup-kuberntes-${KNODE_TYPE}.log"
+		new_log_file
+		case $nodeType in 
+			master)
+				setup_master_node
+				;;
+			slave)
+				setup_slave_node
+				;;
+			*)
+				show_usage "Invalid node type: ${nodeType}"
+				;;
+		esac
+		;;
+        h|*)
+                show_usage
+                ;;
+esac 
+
+#::END::
+
