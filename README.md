@@ -33,3 +33,4 @@ Script to setup Kubernetes cluster using CALICO POD network on CentOS 7
           KADMIN_PASSWORD     Admin user's login password
 
           Note: Values for KMASTER_NODE & KSLAVE_NODES must is in valid JSON format.
+          Note: Admin user will be created if the user doesn't exists.
