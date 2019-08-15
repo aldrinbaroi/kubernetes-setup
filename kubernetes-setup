@@ -271,11 +271,11 @@ function prepare_system__disable_firewall
 function prepare_system__install_required_tools
 {
 	log " "
-	log "Installing required tool [JQ]..."
+	log "Installing required tool [jq]..."
 	install_required_tool__jq
-	install_required_tool__ifconfig
 	log " "
-	log "Installing required tool [IFCONFIG]..."
+	log "Installing tool [ifconfig]..."
+	install_required_tool__ifconfig
 }
 
 function prepare_system__update_hosts_file
@@ -289,11 +289,11 @@ function prepare_system__update_hosts_file
 	local hostFile="/etc/hosts"
 	log "KMASTER_NODE = ${KMASTER_NODE}"
 	hostName=$(echo ${KMASTER_NODE} | jq -cr '.name')
-	if (( $? )); then abort "Failed to kmaster host name"; fi
+	if (( $? )); then abort "Failed to get master node's host name"; fi
 	hostShortName=$(echo ${hostName} | awk 'BEGIN { FS="." }; {print $1}')
-	if (( $? )); then abort "failed to kmaster host short name"; fi
+	if (( $? )); then abort "failed to get master node's host short name"; fi
 	hostIp=$(echo ${KMASTER_NODE} | jq -cr '.ipAddress')
-	if (( $? )); then abort "failed to kmaster ip address"; fi
+	if (( $? )); then abort "failed to get master node's ip address"; fi
 	hostEntry="${hostIp}\t${hostName}\t${hostShortName}"
 	log "${hostEntry}"
 	echo -e " "  >> ${hostFile}
@@ -302,8 +302,11 @@ function prepare_system__update_hosts_file
 	log "KSLAVE_NODES = ${KSLAVE_NODES}"
 	for node in $(echo ${KSLAVE_NODES} | jq -cr '.[]'); do
 		hostName=$(echo ${node} | jq -r ".name")
-		hostIp=$(echo ${node} | jq -r ".ipAddress")
+		if (( $? )); then abort "Failed to get slave node's host name"; fi
 		hostShortName=$(echo ${hostName} | awk 'BEGIN { FS="." }; {print $1}')
+		if (( $? )); then abort "failed to get slave node's host short name"; fi
+		hostIp=$(echo ${node} | jq -r ".ipAddress")
+		if (( $? )); then abort "failed to get slave node's ip address"; fi
 		hostEntry="${hostIp}\t${hostName}\t${hostShortName}" 
 		log "${hostEntry}"
 		echo -e "${hostEntry}" >> ${hostFile}
@@ -315,7 +318,7 @@ function prepare_system__add_admin_user
 {
 	local encpw
 	log ""
-	log "Checking if K8S admin user [${KADMIN_USER}] exist"
+	log "Checking if K8S admin user [${KADMIN_USER}] exist..."
 	if (( $(id -u ${KADMIN_USER} > /dev/null 2>&1; echo $?) )); then
 		log "${KADMIN_USER} user doesn't exist.  Adding the user with default password: ${KADMIN_USER}." 
 		encpw=$(openssl passwd -crypt ${KADMIN_PASSWORD})
@@ -328,6 +331,8 @@ function prepare_system__add_admin_user
 				log "Added admin user successfully."
 			fi
 		fi
+	else
+		log "Admin user exist."
 	fi
 	KADMIN_USER_GROUP=${KADMIN_USER}
 	KADMIN_USER_HOME=$(getent passwd ${KADMIN_USER} | awk 'BEGIN {FS=":"}; {print $6}')
