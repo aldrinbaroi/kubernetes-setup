@@ -7,15 +7,14 @@
 #
 
 readonly DEFAULT_LOG_DIR="/var/log"
-readonly DEFAULT_LOG_FILE_NAME="setup-kubernetes.log"
+readonly DEFAULT_LOG_FILE_NAME="kubernetes-setup.log"
 readonly DEFAULT_LOG_TAG="K8S Setup"
 
 readonly PREREQUISTE_PACKAGES="openssh-server socat"
 readonly NET_FILTER_MODULE_NAME="br_netfilter"
-readonly SETUP_CONFIG_FILE="setup-kubernetes.conf"
-readonly KSLAVE_NODE_CLUSTER_JOIN_COMMNAD_FILE="kslave-cluster-join-command"
-readonly KDASHBOARD_LOGIN_INFO_FILE="kubernetes-dashboard-login.info"
-
+readonly SETUP_CONFIG_FILE="kubernetes-setup.conf"
+readonly KSLAVE_CLUSTER_JOIN_COMMNAD_FILE="kslave-cluster-join-command"
+readonly KDASHBOARD_LOGIN_INFO_FILE="kubernetes-dashboard-login.info" 
 
 readonly VALID_USER=1
 readonly INVALID_USER=0
@@ -41,14 +40,6 @@ KSLAVE_NODES="notset"
 
 LOG=TRUE
 
-## GATEWAY_IP_ADDRESS=10.0.0.1 #172.16.0.1
-## KMASTER_IP_ADDRESS=10.0.1.201 #172.16.0.2
-## CALICO_NETWORK_CIDR=192.168.0.0/16
-## CALICO_YAML_URL="https://docs.projectcalico.org/v3.8/manifests/calico.yaml"
-## KUBERNETES_DASHBOARD_YAML_URL="https://raw.githubusercontent.com/kubernetes/dashboard/v1.10.0/src/deploy/recommended/kubernetes-dashboard.yaml"
-## KUBERNETES_REPO_URL="https://packages.cloud.google.com/yum/repos/kubernetes-el7-x86_64"
-## KUBERNETES_REPO_GPG_KEY_URLS="https://packages.cloud.google.com/yum/doc/yum-key.gpg https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg" 
-
 function show_usage
 {
         local msg=$1
@@ -58,17 +49,23 @@ function show_usage
                 echo " "
         fi
         echo " "
-        echo "setup-kubernetes"
+        echo "kubernetes-setup usage:"
         echo " "
-        echo "  setup-kubernetes -s -t node-type -n node-name [-i node-iface -a node-ip] -u node-user [-d log-dir] | -h"
-        echo "    -s              Setup kubernetes node"
-        echo "    -t node-type    Kubernetes node type [master|slave]"
-	echo "    -n node-name    Set Kubernetes node's host name"
-	echo "    -i node-iface   Set Kubernetes node's ip address for the specified interface"
-	echo "    -a node-ip          - provide IP address & netmask:  Ex:  172.16.0.2/255.255.0.0"
-        echo "    -u node-user    Kubernetes node user other than 'root'"
-	echo "    -d log-dir      Overrides default setup log directory"
-        echo "    -h              Show this usage text"
+	echo "  kubernetes-setup -b | -j | -s SETUP_OPTIONS | -h"
+        echo " "
+	echo "    -b  Get Kubenetes dashboard URL & login token"
+	echo "    -j  Get slave node's cluster join command"
+	echo "    -s  Setup kubernetes node (master|slave)"
+        echo "    -h  Show this usage text"
+        echo " "
+        echo "    SETUP_OPTIONS: -t node-type -n node-name [-i node-iface -a node-ip] -u node-user [-d log-dir]"
+        echo " "
+        echo "      -t node-type    Kubernetes node type [master|slave]"
+	echo "      -n node-name    Kubernetes node's host name"
+	echo "      -i node-iface   Kubernetes node's network interface name"
+	echo "      -a node-ip      IP address & netmask  Ex:  172.16.0.2/255.255.0.0"
+        echo "      -u node-user    Kubernetes node user other than 'root' for running kubectl"
+	echo "      -d log-dir      Overrides default log directory" 
         echo " "
 }
 
@@ -83,7 +80,7 @@ function new_log_file
 	if [ -f "${LOG_FILE}" ]; then
 		backupLogFile="${LOG_FILE}-$(ls --full-time ${LOG_FILE} | awk '{ print $6"_"$7 }' | sed 's/[.].*$//')"
 		if (( $(cp ${LOG_FILE} ${backupLogFile}; echo $?) )); then
-			echo "WARN: filed to create backup of the previous log file"
+			echo "WARN: Failed to create backup of the previous log file"
 		fi
 	fi
 	if (( $(cat /dev/null > ${LOG_FILE}; echo $?) )); then
@@ -106,7 +103,7 @@ function log_disable
 function log
 {
 	if (( LOG )); then
-		echo -e "${1}" | tee >(awk -F "@@" -v prefix="$(date '+%b %d %H:%M:%S') $(hostname) [${LOG_TAG}]: " '{print prefix $1}'  >> ${LOG_FILE}) #| logger  -t "[${LOG_TAG}]"
+		echo -e "${1}" | tee -a ${LOG_FILE} 
 	else
 		echo -e "${1}" 
 	fi 
@@ -126,20 +123,57 @@ function abort
         exit 1
 }
 
+## FIXME Need to fix this to trap error and then display or log the error message
+## TODO  When fixed, remove "exeCmd" and rename "exeCmd__" to "exeCmd"
+function exeCmd__
+{
+        local cmd=$1
+	local errorMsg=$2
+	local successMsg=$3
+        if [ ! -z "${cmd}" ]; then
+		if [[ -z "${errorMsg}" ]]; then
+			errorMsg="Error: Command execution failed. Command: [${cmd}]"
+		fi
+		if [[ -z "${successMsg}" ]]; then
+			successMsg=""
+		fi
+		local _CMD="${cmd}; 
+		            if (( \$? )); then 
+				    echo '${errorMsg}';
+				    echo 'Aborting...';
+				    exit 1;
+			    else
+				    if [[ ! -z '${successMsg}' ]]; then
+					    echo '${successMsg}';
+				    fi;
+			    fi"
+		bash -c "${_CMD}" 2>&1 | log_pipe
+        fi
+}
+
 function exeCmd
 {
-        cmd=$1
+        local cmd=$1
         if [ ! -z "${cmd}" ]; then
-                bash -c "${cmd}" 2>&1 | log_pipe
-        fi
+		bash -c "${cmd}" 2>&1 | log_pipe
+	fi
 }
 
 function exeCmd_asAdminUser
 {
-        cmd=$1
+        local cmd=$1
+	local errorMsg=$2
+	local successMsg=$3
         if [ ! -z "${cmd}" ]; then
-                runuser -l ${KADMIN_USER} -c "${cmd}" 2>&1 | log_pipe
+		local _CMD="runuser -l ${KADMIN_USER} -c '${cmd}'"
+		exeCmd "${_CMD}" "${errorMsg}" "${successMsg}"
         fi
+} 
+
+function yum_install
+{
+	local packages=$1
+	exeCmd "yum install -y ${packages}" "Error: Failed to install packages: ${packages}"
 } 
 
 function load_setup_configuration
@@ -155,40 +189,13 @@ function load_setup_configuration
 
 function install_required_tool__jq
 {
-	if (( $(which jq > /dev/null 2>&1; echo $?) )); then
-                log "JQ is not installed.  Installting it..."
-		if (( $(yum install -y jq > /dev/null 2>&1; echo $?) )); then
-                        log "Failed to install.  Adding EPEL repo..."
-			if (( $(yum install -y epel-release > /dev/null 2>&1; echo $?) == OK )); then
-                                log "EPEL repo added.  installing [JQ]..."
-				if (( $(yum install -y jq > /dev/null 2>&1; echo $?) )); then
-                                        abort "Failed to install required tool [JQ]"
-				else
-					log "Successfully installed [JQ]"
-                                fi
-			else
-				abort "Failed to add EPEL repo to install [JQ]"
-                        fi
-		else
-			log "Successfully installed [JQ]"
-                fi
-	else
-		log "JQ is already installed"
-        fi
+	yum_install "epel-release"
+	yum_install "jq"
 }
 
-function install_required_tool___ifconfig
+function install_required_tool__ifconfig
 {
-	if (( $(which ifconfig > /dev/null 2>&1; echo $?) )); then
-                log "ifconfig is not installed.  Installting it..."
-		if (( $(yum install -y net-tools > /dev/null 2>&1; echo $?) )); then
-                        abort "Failed to install ifconfig"
-		else
-			log "Successfully installed ifconfig"
-		fi
-	else
-		log "ifconfig is already installed"
-	fi
+	yum_install "net-tools"
 }
 
 function prepare_system__set_hostname
@@ -206,12 +213,11 @@ function prepare_system__set_ip_address
 	if [[ ! -z "${KNODE_IFACE}" ]] && [[ ! -z "${KNODE_IP}" ]]; then
 		ipAddress=$(echo ${KNODE_IP} | awk 'BEGIN {FS="/"}; {print $1}')
 		netmask=$(echo ${KNODE_IP} | awk 'BEGIN {FS="/"}; {print $2}')
-		# ifconfig ${KNODE_IFACE} ${KNODE_IP_ADDRESS} ${KNODE_IP_NETMASK}
 		if [[ ! -z "${ipAddress}" ]] && [[ ! -z "${netmask}" ]]; then
 			exeCmd "sed -i -r 's/(IPADDR=\")(.*)(\")/\1'${ipAddress}'\3/; s/(NETMASK=\")(.*)(\")/\1'${netmask}'\3/' ${ifcfgFile}"
 			exeCmd "systemctl restart network"
 		else
-			abort "Error both ip address & netmask be provided. Ex:  IP_ADDRESS/NET_MASKa 172.16.0.2/255.255.0.0"
+			abort "Error: both ip address & netmask need to be provided. Ex:  IP_ADDRESS/NET_MASKa 172.16.0.2/255.255.0.0"
 		fi
 	fi
 }
@@ -242,8 +248,6 @@ function prepare_system__enable_bridge_network
 		net.bridge.bridge-nf-call-iptables = 1
 		net.ipv4.ip_forward = 1
 		EOF
-	#log "  Loading netfilter module..."
-	#exeCmd "modprobe br_netfilter" 
 	exeCmd "sysctl --system"
 }
 
@@ -314,7 +318,7 @@ function prepare_system__add_admin_user
 	log "Checking if K8S admin user [${KADMIN_USER}] exist"
 	if (( $(id -u ${KADMIN_USER} > /dev/null 2>&1; echo $?) )); then
 		log "${KADMIN_USER} user doesn't exist.  Adding the user with default password: ${KADMIN_USER}." 
-		encpw=$(openssl passwd -crypt ${KADMIN_USER})
+		encpw=$(openssl passwd -crypt ${KADMIN_PASSWORD})
 		if (( $? )); then
 			abort "Failed to generate encrypted passwd using openssl"
 		else
@@ -332,9 +336,7 @@ function prepare_system__add_admin_user
 function prepare_system__update_installed_packages
 {
 	log "Updating already installed pacakges to the lates release."
-	if (( $(yum update -y; echo $?) )); then
-		log "WARN: Failed to update installed packages."
-	fi
+	exeCmd "yum update -y" "Error: Failed to update installed packages."
 }
 
 function prepare_system
@@ -357,15 +359,14 @@ function install_prerequisite_packages
 {
 	log " "
 	log "Installing prerequisite packages"
-	exeCmd "yum update -y"
-	exeCmd "yum install -y ${PREREQUISTE_PACKAGES}"
+	yum_install "${PREREQUISTE_PACKAGES}" 
 }
 
 function install_docker
 {
 	log 
 	log "Installing & starting Docker..."
-	exeCmd "yum install -y docker"
+	yum_install "docker"
 	exeCmd "systemctl enable --now docker"
 	exeCmd "systemctl start docker"
 } 
@@ -389,20 +390,20 @@ function install_kubeadm_kubelet_kubectl
 {
 	log "Installing kubeadm, kubelet, kubectl.."
 	exeCmd "yum update -y"
-	exeCmd "yum install -y kubelet kubeadm kubectl --disableexcludes=kubernetes"
+	yum_install "kubelet kubeadm kubectl --disableexcludes=kubernetes"
 	exeCmd "systemctl enable --now kubelet"
 	exeCmd "systemctl start kubelet"
 }
 
 function log_start_setup
 {
-	log "Kuberntest ${KNODE_TYPE} node setup started."
+	log "Kubernetes ${KNODE_TYPE} node setup started."
 } 
 
 function log_end_setup
 {
 	log " " 
-	log "Kuberntest ${KNODE_TYPE} node setup completed."
+	log "Kubernetes ${KNODE_TYPE} node setup completed."
 }
 
 function setup_common_items
@@ -424,7 +425,7 @@ function setup_dashboard
 	exeCmd_asAdminUser "kubectl create clusterrolebinding dashboard-admin -n default --clusterrole=cluster-admin --serviceaccount=default:dashboard"
 
 	log "Exposing dashboard on NodePort..."
-	exeCmd_asAdminUser "kubectl patch svc kubernetes-dashboard --type=json -p '[{\"op\":\"replace\",\"path\":\"/spec/type\",\"value\":\"NodePort\"}]' --namespace=kube-system"
+	exeCmd_asAdminUser "kubectl patch svc kubernetes-dashboard --type=json -p "'"[{\"op\":\"replace\",\"path\":\"/spec/type\",\"value\":\"NodePort\"}]"'" --namespace=kube-system"
 }
 
 function get_dashboard_url_and_login_token
@@ -432,12 +433,14 @@ function get_dashboard_url_and_login_token
 	log " "
 	log "Getting kubernetes dashboard login url & token..."
 	local tmpFile="/tmp/${KDASHBOARD_LOGIN_INFO_FILE}"
+	exeCmd "cat /dev/null > ${tmpFile}"
+	exeCmd "chmod 666 ${tmpFile}"
 	echo "#" > ${tmpFile}
 	echo "# Kubernetes dashboard URL and login token" >> ${tmpFile}
 	echo "#" >> ${tmpFile}
 	echo " " >> ${tmpFile}
 	log " "
-	exeCmd_asAdminUser "k8sdbp=\$(kubectl -n kube-system get service kubernetes-dashboard --no-headers | awk '{print \$5}' | sed -r 's/(.*[:])([0-9]+)([/].*)/\\2/'); echo \"The dashboard can be accessed at https://${KMASTER_IP_ADDRESS}:\${k8sdbp}\" | tee -a ${tmpFile}"
+	exeCmd_asAdminUser "k8sdbp=\$(kubectl -n kube-system get service kubernetes-dashboard --no-headers | awk "'"{print \$5}"'" | sed -r "'"s/(.*[:])([0-9]+)([/].*)/\\2/"'"); echo \"The dashboard can be accessed at https://${KMASTER_IP_ADDRESS}:\${k8sdbp}\" | tee -a ${tmpFile}"
 	echo " " >> ${tmpFile} 
 	log " "
 	exeCmd_asAdminUser "dblt=\$(kubectl get secret \$(kubectl get serviceaccount dashboard -o jsonpath='{.secrets[0].name}') -o jsonpath='{.data.token}' | base64 --decode); echo \"Dashboard login token: \${dblt}\" | tee -a ${tmpFile}"
@@ -450,21 +453,19 @@ function get_dashboard_url_and_login_token
 
 function generate_slave_node_cluster_join_command
 {
-	cat /dev/null > ${KSLAVE_NODE_CLUSTER_JOIN_COMMNAD_FILE}
+	cat /dev/null > ${KSLAVE_CLUSTER_JOIN_COMMNAD_FILE}
 	log " "
 	log "Generating slave node's cluster join command..."
 	log "Slave node's cluster join command:\n"
-	exeCmd "kslaveJoinCmd=\$(kubeadm token create --print-join-command); echo \${kslaveJoinCmd} | tee ${KSLAVE_NODE_CLUSTER_JOIN_COMMNAD_FILE}"
-	log "\nThe join command has been saved in the ${KSLAVE_NODE_CLUSTER_JOIN_COMMNAD_FILE} file"
+	exeCmd "kslaveJoinCmd=\$(kubeadm token create --print-join-command); echo \${kslaveJoinCmd} | tee ${KSLAVE_CLUSTER_JOIN_COMMNAD_FILE}"
+	log "\nThe join command has been saved in the ${KSLAVE_CLUSTER_JOIN_COMMNAD_FILE} file"
 	log "Please copy this file over to the slave node before running Kubernetes slave node setup script."
 }
 
 function slave_node__join_cluster
 {
 	log "Executing cluster join command..."
-	local clusterJoinCmdFile="/root/${KSLAVE_NODE_CLUSTER_JOIN_COMMNAD_FILE}"
-	#exeCmd "chmod 755 ${clusterJoinCmdFile}"
-	#exeCmd "chown ${KADMIN_USER}:${KADMIN_USER_GROUP} ${clusterJoinCmdFile}"
+	local clusterJoinCmdFile="${KSLAVE_CLUSTER_JOIN_COMMNAD_FILE}"
 	exeCmd "bash ${clusterJoinCmdFile}; if (( \$? )); then echo 'Failed to join the cluster'; else echo 'Successfully joined the cluster'; fi"
 }
 
@@ -474,12 +475,12 @@ function setup_master_node
 	setup_common_items
 
 	log " "
-       	log "Initiating cluster..."
+	log "Initiating cluster..."
 	exeCmd "kubeadm init --pod-network-cidr=${CALICO_NETWORK_CIDR} --apiserver-advertise-address=${KMASTER_IP_ADDRESS}"
 	
 	log " "
 	log "Setting up KADMIN_USER (${KADMIN_USER}) environment to be able to user kubectl command"
-	exeCmd_asAdminUser "mkdir ${KADMIN_USER_HOME}/.kube"
+	exeCmd_asAdminUser "mkdir -p ${KADMIN_USER_HOME}/.kube"
 	exeCmd "cp /etc/kubernetes/admin.conf ${KADMIN_USER_HOME}/.kube/config"
 	exeCmd "chown -R ${KADMIN_USER}:${KADMIN_USER_GROUP} /home/${KADMIN_USER}/.kube/config"
 	
