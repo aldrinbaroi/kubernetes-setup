@@ -25,7 +25,6 @@ Script to setup Kubernetes cluster using CALICO POD network on CentOS 7
          
           Change the following to match your setup:
 
-          GATEWAY_IP_ADDRESS  (currently not used)
           KMASTER_IP_ADDRESS  Master node's IP address
           KMASTER_NODE        Master node's IP address, hostname, short hostname
           KSLAVE_NODES        List of slave nodes' IP address, hostname, short hostname
