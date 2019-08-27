@@ -55,16 +55,16 @@ function show_usage
         echo " "
 	echo "    -b  Get Kubenetes dashboard URL & login token"
 	echo "    -j  Get slave node's cluster join command"
-	echo "    -s  Setup kubernetes node (master|slave)"
+	echo "    -s  Setup Kubernetes node (master|slave)"
         echo "    -h  Show this usage text"
         echo " "
-        echo "    SETUP_OPTIONS: -t node-type -n node-name [-i node-iface -a node-ip] -u node-user [-d log-dir]"
+        echo "    SETUP_OPTIONS: -t node-type [-n node-name] [-i node-iface -a node-ip] [-u node-user] [-d log-dir]"
         echo " "
         echo "      -t node-type    Kubernetes node type [master|slave]"
-	echo "      -n node-name    Kubernetes node's host name"
-	echo "      -i node-iface   Kubernetes node's network interface name"
+	echo "      -n node-name    Kubernetes node's host name (override config file)"
+	echo "      -i node-iface   Kubernetes node's network interface name (changes node's IP address)"
 	echo "      -a node-ip      IP address & netmask  Ex:  172.16.0.2/255.255.0.0"
-        echo "      -u node-user    Kubernetes node user other than 'root' for running kubectl"
+	echo "      -u node-user    Kubernetes admin user other than 'root' for running kubectl (override config file)"
 	echo "      -d log-dir      Overrides default log directory" 
         echo " "
 }
@@ -201,7 +201,8 @@ function install_required_tool__ifconfig
 function prepare_system__set_hostname
 {
 	if [[ ! -z "${KNODE_NAME}" ]]; then
-		hostnamectl set-hostname ${KNODE_NAME}
+		log "Changing & setting host name to ${KNODE_NAME}..."
+		exeCmd "hostnamectl set-hostname ${KNODE_NAME}"
 	fi
 }
 
@@ -484,7 +485,7 @@ function setup_master_node
 	exeCmd "kubeadm init --pod-network-cidr=${CALICO_NETWORK_CIDR} --apiserver-advertise-address=${KMASTER_IP_ADDRESS}"
 	
 	log " "
-	log "Setting up KADMIN_USER (${KADMIN_USER}) environment to be able to user kubectl command"
+	log "Setting up KADMIN_USER (${KADMIN_USER}) environment to be able to use kubectl command"
 	exeCmd_asAdminUser "mkdir -p ${KADMIN_USER_HOME}/.kube"
 	exeCmd "cp /etc/kubernetes/admin.conf ${KADMIN_USER_HOME}/.kube/config"
 	exeCmd "chown -R ${KADMIN_USER}:${KADMIN_USER_GROUP} /home/${KADMIN_USER}/.kube/config"
