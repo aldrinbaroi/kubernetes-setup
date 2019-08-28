@@ -6,7 +6,9 @@
 # 
 #
 
-readonly DEFAULT_LOG_DIR="/var/log"
+readonly CURRENT_DIR="$(pwd)"
+
+readonly DEFAULT_LOG_DIR="${CURRENT_DIR}"
 readonly DEFAULT_LOG_FILE_NAME="kubernetes-setup.log"
 readonly DEFAULT_LOG_TAG="K8S Setup"
 
@@ -21,7 +23,7 @@ readonly INVALID_USER=0
 readonly TRUE=1
 readonly FALSE=0
 readonly ERROR=1
-readonly OK=0
+readonly OK=0 
 
 LOG_DIR="${DEFAULT_LOG_DIR}"
 LOG_FILE="${LOG_DIR}/{${DEFAULT_LOG_FILE_NAME}"
@@ -521,7 +523,7 @@ function generate_slave_node_cluster_join_command
 function slave_node__join_cluster
 {
 	log "Executing cluster join command..."
-	local clusterJoinCmdFile="$(pwd)/${KSLAVE_CLUSTER_JOIN_COMMNAD_FILE}"
+	local clusterJoinCmdFile="${CURRENT_DIR}/${KSLAVE_CLUSTER_JOIN_COMMNAD_FILE}"
 	exeCmd "bash ${clusterJoinCmdFile}; if (( \$? )); then echo 'Failed to join the cluster'; else echo 'Successfully joined the cluster'; fi"
 }
 
