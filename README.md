@@ -11,7 +11,7 @@ Script to setup Kubernetes cluster using CALICO POD network on CentOS 7
             -s  Setup kubernetes node (master|slave)
             -h  Show this usage text
          
-            SETUP_OPTIONS: -t node-type -n node-name [-i node-iface -a node-ip] -u node-user [-d log-dir]
+            SETUP_OPTIONS: -t node-type -n node-name [-i node-iface -a node-ip] [-u node-user] [-d log-dir]
          
               -t node-type    Kubernetes node type [master|slave]
               -n node-name    Kubernetes node's host name
@@ -31,5 +31,8 @@ Script to setup Kubernetes cluster using CALICO POD network on CentOS 7
           KADMIN_USER         Admin user's login ID
           KADMIN_PASSWORD     Admin user's login password
 
-          Note: Values for KMASTER_NODE & KSLAVE_NODES must is in valid JSON format.
-          Note: Admin user will be created if the user doesn't exists.
+          Notes: 
+          1) Values for KMASTER_NODE & KSLAVE_NODES must be in valid JSON format.
+          2) Admin user will be created if the user doesn't exists.
+          3) Before running slave node setup, copy the "kslave-cluster-join-command" file from the master node.
+ 
