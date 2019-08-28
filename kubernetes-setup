@@ -187,6 +187,37 @@ function load_setup_configuration
 	fi
 } 
 
+function is_service_active
+{
+        local service=$1
+        if [ ! -z ${service} ]; then
+                if (( $(systemctl is-active -q ${service}; echo $?) == 0 )); then
+                        echo ${TRUE}
+                else
+                        echo ${FALSE}
+                fi
+        else
+                echo ${FALSE}
+        fi
+} 
+
+function wait_for_service_to_be_active
+{
+        local service=$1
+	local maxCheckCount=$2
+	local checkInternal=$3
+        for checkCount in $(seq 1 ${maxCheckCount}); do
+                if (( ! $(is_service_active ${service}) )); then
+                        log "Wating ${checkInternal} seconds for ${service} to become active..."
+                        sleep ${checkInterval}
+                fi
+        done
+        if (( ! $(is_service_active ${service}) )); then
+                return ${ERROR}
+        fi
+}
+
+
 function install_required_tool__jq
 {
 	yum_install "epel-release"
@@ -241,6 +272,7 @@ function prepare_system__enable_bridge_network
 		EOF
 	log "  Loading netfilter module..."
 	exeCmd "modprobe br_netfilter" 
+	exeCmd "sleep 5"
 
 	log " "
 	log "  Enabling bridge network routing & ip forwarding..."
@@ -250,6 +282,7 @@ function prepare_system__enable_bridge_network
 		net.ipv4.ip_forward = 1
 		EOF
 	exeCmd "sysctl --system"
+	exeCmd "sleep 5"
 }
 
 function prepare_system__disable_swap_space
@@ -298,7 +331,7 @@ function prepare_system__update_hosts_file
 	hostEntry="${hostIp}\t${hostName}\t${hostShortName}"
 	log "${hostEntry}"
 	echo -e " "  >> ${hostFile}
-	echo -e "#<k8s Added by setup-kubernetes script on $(date)>"  >> ${hostFile}
+	echo -e "#<k8s Added by kubernetes-setup script on $(date)>"  >> ${hostFile}
 	echo -e "${hostEntry}" >> ${hostFile}
 	log "KSLAVE_NODES = ${KSLAVE_NODES}"
 	for node in $(echo ${KSLAVE_NODES} | jq -cr '.[]'); do
@@ -370,11 +403,20 @@ function install_prerequisite_packages
 
 function install_docker
 {
-	log 
+	local callStatus
+	log " "
 	log "Installing & starting Docker..."
 	yum_install "docker"
 	exeCmd "systemctl enable --now docker"
 	exeCmd "systemctl start docker"
+	log "Waiting for docker service to be active..."
+	wait_for_service_to_be_active "docker" 5 3
+	callStatus=$?
+	if (( ${callStatus} )); then
+		abort "Docker failed to start within specified time limit."
+	else
+		log "Docker service started."
+	fi 
 } 
 
 function setup_kubernetes_repository
@@ -399,6 +441,14 @@ function install_kubeadm_kubelet_kubectl
 	yum_install "kubelet kubeadm kubectl --disableexcludes=kubernetes"
 	exeCmd "systemctl enable --now kubelet"
 	exeCmd "systemctl start kubelet"
+	log "Waiting for kubelet service to be active..."
+	wait_for_service_to_be_active "kubelet" 5 3
+	callStatus=$?
+	if (( ${callStatus} )); then
+		abort "Kubelet failed to start within specified time limit."
+	else
+		log "Kubelet service started."
+	fi 
 }
 
 function log_start_setup
