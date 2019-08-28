@@ -11,7 +11,7 @@ Script to setup Kubernetes cluster using CALICO POD network on CentOS 7
             -s  Setup kubernetes node (master|slave)
             -h  Show this usage text
          
-            SETUP_OPTIONS: -t node-type -n node-name [-i node-iface -a node-ip] [-u node-user] [-d log-dir]
+            SETUP_OPTIONS: -t node-type [-n node-name] [-i node-iface -a node-ip] [-u node-user] [-d log-dir]
          
               -t node-type    Kubernetes node type [master|slave]
               -n node-name    Kubernetes node's host name

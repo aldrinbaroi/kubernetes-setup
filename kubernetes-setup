@@ -8,6 +8,7 @@
 
 readonly CURRENT_DIR="$(pwd)"
 
+readonly DEFAULT_KNODE_NAME="$(hostname)"
 readonly DEFAULT_LOG_DIR="${CURRENT_DIR}"
 readonly DEFAULT_LOG_FILE_NAME="kubernetes-setup.log"
 readonly DEFAULT_LOG_TAG="K8S Setup"
@@ -34,7 +35,7 @@ KADMIN_USER="notset"
 KADMIN_USER_GROUP="notset"
 KADMIN_USER_HOME="notset"
 KNODE_TYPE="noset"
-KNODE_NAME=""
+KNODE_NAME="${DEFAULT_KNODE_NAME}"
 KNODE_IFACE=""
 KNODE_IP=""
 KMASTER_NODE="notset"
