@@ -521,7 +521,7 @@ function generate_slave_node_cluster_join_command
 function slave_node__join_cluster
 {
 	log "Executing cluster join command..."
-	local clusterJoinCmdFile="${KSLAVE_CLUSTER_JOIN_COMMNAD_FILE}"
+	local clusterJoinCmdFile="$(pwd)/${KSLAVE_CLUSTER_JOIN_COMMNAD_FILE}"
 	exeCmd "bash ${clusterJoinCmdFile}; if (( \$? )); then echo 'Failed to join the cluster'; else echo 'Successfully joined the cluster'; fi"
 }
 
