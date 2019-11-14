@@ -6,6 +6,7 @@
 # 
 #
 
+
 readonly CURRENT_DIR="$(pwd)"
 
 readonly DEFAULT_KNODE_NAME="$(hostname)"
@@ -18,6 +19,7 @@ readonly NET_FILTER_MODULE_NAME="br_netfilter"
 readonly SETUP_CONFIG_FILE="kubernetes-setup.conf"
 readonly KSLAVE_CLUSTER_JOIN_COMMNAD_FILE="kslave-cluster-join-command"
 readonly KDASHBOARD_LOGIN_INFO_FILE="kubernetes-dashboard-login.info" 
+readonly KDASHBOARD_NAMESPACE="kubernetes-dashboard"
 
 readonly VALID_USER=1
 readonly INVALID_USER=0
@@ -126,40 +128,38 @@ function abort
         exit 1
 }
 
-## FIXME Need to fix this to trap error and then display or log the error message
-## TODO  When fixed, remove "exeCmd" and rename "exeCmd__" to "exeCmd"
-function exeCmd__
+function exeCmd
 {
         local cmd=$1
 	local errorMsg=$2
-	local successMsg=$3
+	local successMsg=$3 
+	set -e
+	set -o pipefail 
         if [ ! -z "${cmd}" ]; then
-		if [[ -z "${errorMsg}" ]]; then
-			errorMsg="Error: Command execution failed. Command: [${cmd}]"
+		if [ -z "${errorMsg}" ]; then
+			errorMsg="Error: Command execution failed. Command: [${cmd//\"/\\\"}]"
+		else
+			errorMsg="${errorMsg//\"/\\\"}"
 		fi
-		if [[ -z "${successMsg}" ]]; then
+		if [ -z "${successMsg}" ]; then
 			successMsg=""
+		else
+			successMsg="${successMsg//\"/\\\"}"
 		fi
 		local _CMD="${cmd}; 
 		            if (( \$? )); then 
-				    echo '${errorMsg}';
+				    echo \"${errorMsg}\";
 				    echo 'Aborting...';
 				    exit 1;
 			    else
-				    if [[ ! -z '${successMsg}' ]]; then
-					    echo '${successMsg}';
+				    if [ ! -z \"${successMsg}\" ]; then
+					    echo \"${successMsg}\";
 				    fi;
 			    fi"
 		bash -c "${_CMD}" 2>&1 | log_pipe
         fi
-}
-
-function exeCmd
-{
-        local cmd=$1
-        if [ ! -z "${cmd}" ]; then
-		bash -c "${cmd}" 2>&1 | log_pipe
-	fi
+	set +o pipefail 
+	set +e
 }
 
 function exeCmd_asAdminUser
@@ -208,10 +208,10 @@ function wait_for_service_to_be_active
 {
         local service=$1
 	local maxCheckCount=$2
-	local checkInternal=$3
+	local checkInterval=$3
         for checkCount in $(seq 1 ${maxCheckCount}); do
                 if (( ! $(is_service_active ${service}) )); then
-                        log "Wating ${checkInternal} seconds for ${service} to become active..."
+                        log "Wating ${checkInterval} seconds for ${service} to become active..."
                         sleep ${checkInterval}
                 fi
         done
@@ -227,7 +227,7 @@ function install_required_tool__jq
 	yum_install "jq"
 }
 
-function install_required_tool__ifconfig
+function install_optional_tool__ifconfig
 {
 	yum_install "net-tools"
 }
@@ -246,6 +246,7 @@ function prepare_system__set_ip_address
 	local netmask
 	local ifcfgFile="/etc/sysconfig/network-scripts/ifcfg-${KNODE_IFACE}"
 	if [[ ! -z "${KNODE_IFACE}" ]] && [[ ! -z "${KNODE_IP}" ]]; then
+		log "Changing & setting IP address & netmask..."
 		ipAddress=$(echo ${KNODE_IP} | awk 'BEGIN {FS="/"}; {print $1}')
 		netmask=$(echo ${KNODE_IP} | awk 'BEGIN {FS="/"}; {print $2}')
 		if [[ ! -z "${ipAddress}" ]] && [[ ! -z "${netmask}" ]]; then
@@ -257,12 +258,25 @@ function prepare_system__set_ip_address
 	fi
 }
 
+function is_selinux_disabled 
+{
+	if [ "$(getenforce)" = "Disabled" ]; then
+		echo ${TRUE}
+	else
+		echo ${FALSE}
+	fi
+}
+
 function prepare_system__disable_selinux
 {
 	log " "
 	log "Disabling SELINUX system..."
-	exeCmd "setenforce 0"
-	exeCmd "sed -i s/^SELINUX=enforcing$/SELINUX=permissive/ /etc/selinux/config"
+	if (( $(is_selinux_disabled) )); then
+		log "SELINUX system is already disabled."
+	else
+		exeCmd "setenforce 0"
+		exeCmd "sed -i s/^SELINUX=enforcing$/SELINUX=permissive/ /etc/selinux/config"
+	fi
 }
 
 function prepare_system__enable_bridge_network
@@ -312,7 +326,7 @@ function prepare_system__install_required_tools
 	install_required_tool__jq
 	log " "
 	log "Installing tool [ifconfig]..."
-	install_required_tool__ifconfig
+	install_optional_tool__ifconfig
 }
 
 function prepare_system__update_hosts_file
@@ -422,6 +436,41 @@ function install_docker
 	fi 
 } 
 
+function install_container_d 
+{
+	local callStatus
+	log " "
+	log "Installing containerd prerequisites..."
+	yum_install "libseccomp btrfs-progs-devel protobuf-devel protobuf-compiler protobuf runc"
+	log "Installing & starting containerd..."
+	yum_install "containerd"
+	exeCmd "systemctl enable --now containerd"
+	exeCmd "systemctl start containerd"
+	log "Waiting for container service to be active..."
+	wait_for_service_to_be_active "containerd" 5 3
+	callStatus=$?
+	if (( ${callStatus} )); then
+		abort "containerd failed to start within specified time limit."
+	else
+		log "containerd service started."
+	fi 
+}
+
+function install_container_runtime
+{
+	case ${CONTAINER_TYPE} in
+		containerd)
+			install_container_d
+			;;
+		docker)
+			install_docker
+			;;
+		*)
+			abort "Container runtime ${CONTAINER_TYPE} is not supported"
+			;;
+	esac
+}
+
 function setup_kubernetes_repository
 {
 	log " "
@@ -469,7 +518,7 @@ function setup_common_items
 {
 	prepare_system
 	install_prerequisite_packages
-	install_docker
+	install_container_runtime
 	setup_kubernetes_repository
 	install_kubeadm_kubelet_kubectl
 }
@@ -484,7 +533,7 @@ function setup_dashboard
 	exeCmd_asAdminUser "kubectl create clusterrolebinding dashboard-admin -n default --clusterrole=cluster-admin --serviceaccount=default:dashboard"
 
 	log "Exposing dashboard on NodePort..."
-	exeCmd_asAdminUser "kubectl patch svc kubernetes-dashboard --type=json -p "'"[{\"op\":\"replace\",\"path\":\"/spec/type\",\"value\":\"NodePort\"}]"'" --namespace=kube-system"
+	exeCmd_asAdminUser "kubectl patch svc kubernetes-dashboard --type=json -p "'"[{\"op\":\"replace\",\"path\":\"/spec/type\",\"value\":\"NodePort\"}]"'" --namespace=${KDASHBOARD_NAMESPACE}"
 }
 
 function get_dashboard_url_and_login_token
@@ -499,7 +548,7 @@ function get_dashboard_url_and_login_token
 	echo "#" >> ${tmpFile}
 	echo " " >> ${tmpFile}
 	log " "
-	exeCmd_asAdminUser "k8sdbp=\$(kubectl -n kube-system get service kubernetes-dashboard --no-headers | awk "'"{print \$5}"'" | sed -r "'"s/(.*[:])([0-9]+)([/].*)/\\2/"'"); echo \"The dashboard can be accessed at https://${KMASTER_IP_ADDRESS}:\${k8sdbp}\" | tee -a ${tmpFile}"
+	exeCmd_asAdminUser "k8sdbp=\$(kubectl -n ${KDASHBOARD_NAMESPACE} get service kubernetes-dashboard --no-headers | awk "'"{print \$5}"'" | sed -r "'"s/(.*[:])([0-9]+)([/].*)/\\2/"'"); echo \"The dashboard can be accessed at https://${KMASTER_IP_ADDRESS}:\${k8sdbp}\" | tee -a ${tmpFile}"
 	echo " " >> ${tmpFile} 
 	log " "
 	exeCmd_asAdminUser "dblt=\$(kubectl get secret \$(kubectl get serviceaccount dashboard -o jsonpath='{.secrets[0].name}') -o jsonpath='{.data.token}' | base64 --decode); echo \"Dashboard login token: \${dblt}\" | tee -a ${tmpFile}"
