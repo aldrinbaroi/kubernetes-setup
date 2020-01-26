@@ -4,7 +4,7 @@ Script to setup Kubernetes cluster using CALICO POD network on CentOS 7
 
         kubernetes-setup usage:
          
-          kubernetes-setup -b | -j | -s SETUP_OPTIONS | -h
+          kubernetes-setup -b | -j | [-s|-r] SETUP_OPTIONS | -h
          
             -b     Get Kubenetes dashboard URL & login token
             -j     Get slave node's cluster join command
