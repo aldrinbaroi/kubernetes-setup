@@ -43,7 +43,13 @@ KNODE_IP=""
 KMASTER_NODE="notset"
 KSLAVE_NODES="notset"
 
+SETUP_DASHBOARD=${FALSE}
+
 LOG=TRUE
+
+nodeType=""
+nodeUser=""
+REINSTALL=${FALSE}
 
 function show_usage
 {
@@ -56,20 +62,21 @@ function show_usage
         echo " "
         echo "kubernetes-setup usage:"
         echo " "
-	echo "  kubernetes-setup -b | -j | -s SETUP_OPTIONS | -h"
+	echo "  kubernetes-setup -b | -j | [-s|-r] SETUP_OPTIONS | -h"
         echo " "
-	echo "    -b  Get Kubenetes dashboard URL & login token"
-	echo "    -j  Get slave node's cluster join command"
-	echo "    -s  Setup Kubernetes node (master|slave)"
-        echo "    -h  Show this usage text"
+	echo "    -b     Get Kubenetes dashboard URL & login token"
+	echo "    -j     Get slave node's cluster join command"
+	echo "    -s|-r  Setup/reinstall Kubernetes node (master|slave)"
+        echo "    -h     Show this usage text"
         echo " "
-        echo "    SETUP_OPTIONS: -t node-type [-n node-name] [-i node-iface -a node-ip] [-u node-user] [-d log-dir]"
+        echo "    SETUP_OPTIONS: -t node-type [-n node-name] [-i node-iface -a node-ip] [-u node-user] [-c] [-d log-dir]"
         echo " "
         echo "      -t node-type    Kubernetes node type [master|slave]"
 	echo "      -n node-name    Kubernetes node's host name (override config file)"
 	echo "      -i node-iface   Kubernetes node's network interface name (changes node's IP address)"
 	echo "      -a node-ip      IP address & netmask  Ex:  172.16.0.2/255.255.0.0"
 	echo "      -u node-user    Kubernetes admin user other than 'root' for running kubectl (override config file)"
+	echo "      -c              Setup dashboard. Only applies to master node. By default dashboard is not setup"
 	echo "      -d log-dir      Overrides default log directory" 
         echo " "
 }
@@ -491,10 +498,13 @@ function install_kubeadm_kubelet_kubectl
 	log "Installing kubeadm, kubelet, kubectl.."
 	exeCmd "yum update -y"
 	yum_install "kubelet kubeadm kubectl --disableexcludes=kubernetes"
+	#log "Pulling images..."
+	#exeCmd "kubeadm config images pull"
+	log "Enabling & starting kubelet..."
 	exeCmd "systemctl enable --now kubelet"
 	exeCmd "systemctl start kubelet"
 	log "Waiting for kubelet service to be active..."
-	wait_for_service_to_be_active "kubelet" 5 3
+	wait_for_service_to_be_active "kubelet" 10 5
 	callStatus=$?
 	if (( ${callStatus} )); then
 		abort "Kubelet failed to start within specified time limit."
@@ -516,10 +526,14 @@ function log_end_setup
 
 function setup_common_items
 {
-	prepare_system
-	install_prerequisite_packages
-	install_container_runtime
-	setup_kubernetes_repository
+	if (( ${REINSTALL} == ${TRUE} )); then
+		prepare_system__add_admin_user
+	else
+		prepare_system
+		install_prerequisite_packages
+		install_container_runtime
+		setup_kubernetes_repository
+	fi
 	install_kubeadm_kubelet_kubectl
 }
 
@@ -595,8 +609,10 @@ function setup_master_node
 	log "Setting up POD network"
 	exeCmd_asAdminUser "kubectl apply -f ${CALICO_YAML_URL}"
 
-	setup_dashboard
-	get_dashboard_url_and_login_token
+	if (( ${SETUP_DASHBOARD} == ${TRUE} )); then
+		setup_dashboard
+		get_dashboard_url_and_login_token
+	fi
 	generate_slave_node_cluster_join_command
 
 	log_end_setup 
@@ -611,10 +627,75 @@ function setup_slave_node
 	log_end_setup 
 }
 
+function prepare_for_reinstall
+{
+	log "Disabling & stopping kubelet..."
+	exeCmd 'systemctl disable kubelet'
+	exeCmd 'systemctl stop kubelet'
+	sleep 3
+	log "Removing kubenetes..."
+	exeCmd 'yum remove -y kube*'
+	log "Stopping all kubernetes processes..."
+	[[ $(pgrep "master") ]]    && exeCmd 'pkill master'
+	[[ $(pgrep "kubelet") ]]   && exeCmd 'pkill kubelet'
+	[[ $(pgrep "kube-api") ]] && exeCmd 'pkill "kube-api*"'
+	[[ $(pgrep "etcd") ]]      && exeCmd 'pkill etcd'
+	log "Stopping all docker containers..." 
+	if (( $(docker container ps -aq | wc -l) > 0 )); then
+		exeCmd 'docker container stop $(docker container ps -aq)'
+	else
+		log '  No containers to stop'
+	fi 
+	log "Removing all docker containers..."
 
-# __main__
+	if (( $(docker container ps -aq | wc -l) > 0 )); then
+		exeCmd 'docker container rm $(docker container ps -aq)'
+	else
+		log '  No containers to remove'
+	fi 
+	log "Removing all docker images..."
 
-readonly OPTIONS=":bjst:n:i:a:u:d:h"
+	if (( $(docker images ls -aq | wc -l) > 0 )); then
+		exeCmd 'docker images rm $(docker images ls -aq)'
+	else
+		log '  No images to remove'
+	fi 
+	log "Removing all docker volumes..."
+	if (( $(docker volume ls -q | wc -l) > 0 )); then
+		exeCmd 'docker volume rm $(docker volume ls -q)'
+	else
+		log '  No volumes to remove'
+	fi 
+	log "Unmounting all kubenetes tmpfs mounts..."
+	if [[ $(mount -l -t tmpfs | grep kube | wc -l) > 0 ]]; then
+		exeCmd 'mount -l -t tmpfs | grep kube | awk '"'"'{print $3}'"'"' | xargs -l umount -t tmpfs'
+	else
+		log "  No tmpfs mount to unmount"
+	fi
+	log "Removing all kubernetes config and other files & temporary mount points..."
+	exeCmd 'rm -rf /etc/kubernetes'
+	exeCmd 'rm -rf /var/lib/etcd'
+	exeCmd 'rm -rf /var/lib/kube*'
+}
+
+function run_setup
+{
+	case $nodeType in
+		master)
+			setup_master_node
+			;;
+		slave)
+			setup_slave_node
+			;;
+		*)
+			show_usage "Invalid node type: ${nodeType}"
+			;;
+	esac 
+}
+
+# __main__ 
+
+readonly OPTIONS=":bjsrt:n:i:a:u:cd:h"
 getopts "${OPTIONS}" opt ${@}
 case $opt in
 	b)
@@ -627,8 +708,11 @@ case $opt in
 	       	load_setup_configuration
 		generate_slave_node_cluster_join_command
 		;;
-	s)
+	r|s)
 	       	load_setup_configuration
+		if [[ "${opt}" == "r" ]]; then
+			REINSTALL=${TRUE}
+		fi
 		nodeType=""
 		nodeUser=""
                 while getopts "${OPTIONS}" opt ${@}; do
@@ -647,6 +731,9 @@ case $opt in
                                         ;;
                                 u)
                                         nodeUser=${OPTARG}
+                                        ;;
+                                c)
+                                        SETUP_DASHBOARD=${TRUE}
                                         ;;
                                 d)
                                         logDir=${OPTARG}
@@ -674,6 +761,9 @@ case $opt in
 		fi
 		LOG_FILE="${LOG_DIR}/setup-kuberntes-${KNODE_TYPE}.log"
 		new_log_file
+		if (( ${REINSTALL} == ${TRUE} )); then
+			prepare_for_reinstall
+		fi
 		case $nodeType in 
 			master)
 				setup_master_node

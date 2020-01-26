@@ -6,10 +6,10 @@ Script to setup Kubernetes cluster using CALICO POD network on CentOS 7
          
           kubernetes-setup -b | -j | -s SETUP_OPTIONS | -h
          
-            -b  Get Kubenetes dashboard URL & login token
-            -j  Get slave node's cluster join command
-            -s  Setup kubernetes node (master|slave)
-            -h  Show this usage text
+            -b     Get Kubenetes dashboard URL & login token
+            -j     Get slave node's cluster join command
+            -s|-r  Setup/reinstall kubernetes node (master|slave)
+            -h     Show this usage text
          
             SETUP_OPTIONS: -t node-type [-n node-name] [-i node-iface -a node-ip] [-u node-user] [-d log-dir]
          
@@ -18,6 +18,7 @@ Script to setup Kubernetes cluster using CALICO POD network on CentOS 7
               -i node-iface   Kubernetes node's network interface name
               -a node-ip      IP address & netmask  Ex:  172.16.0.2/255.255.0.0
               -u node-user    Kubernetes admin user other than 'root' for running kubectl
+              -c              Setup dashboard. Only applies to master node. By default dashboard is not setup
               -d log-dir      Overrides default log directory 
          
 
