@@ -186,6 +186,11 @@ function yum_install
 	exeCmd "yum install -y ${packages}" "Error: Failed to install packages: ${packages}"
 } 
 
+function yum_update
+{
+	exeCmd "yum update -y" "Error: Failed to update installed packages"
+} 
+
 function load_setup_configuration
 {
 	if [ ! -f "${SETUP_CONFIG_FILE}" ]; then
@@ -201,7 +206,7 @@ function is_service_active
 {
         local service=$1
         if [ ! -z ${service} ]; then
-                if (( $(systemctl is-active -q ${service}; echo $?) == 0 )); then
+                if (( $(systemctl is-active -q ${service} > /dev/null 2>&1; echo $?) == 0 )); then
                         echo ${TRUE}
                 else
                         echo ${FALSE}
@@ -257,7 +262,8 @@ function prepare_system__set_ip_address
 		ipAddress=$(echo ${KNODE_IP} | awk 'BEGIN {FS="/"}; {print $1}')
 		netmask=$(echo ${KNODE_IP} | awk 'BEGIN {FS="/"}; {print $2}')
 		if [[ ! -z "${ipAddress}" ]] && [[ ! -z "${netmask}" ]]; then
-			exeCmd "sed -i -r 's/(IPADDR=\")(.*)(\")/\1'${ipAddress}'\3/; s/(NETMASK=\")(.*)(\")/\1'${netmask}'\3/' ${ifcfgFile}"
+			#exeCmd "sed -i -r 's/(IPADDR=\")(.*)(\")/\1'${ipAddress}'\3/; s/(NETMASK=\")(.*)(\")/\1'${netmask}'\3/' ${ifcfgFile}"
+			exeCmd "sed -i 's/IPADDR=.*/IPADDR=${ipAddress}/; s/NETMASK=.*/NETMASK=${netmask}/' ${ifcfgFile}"
 			exeCmd "systemctl restart network"
 		else
 			abort "Error: both ip address & netmask need to be provided. Ex:  IP_ADDRESS/NET_MASKa 172.16.0.2/255.255.0.0"
@@ -345,31 +351,31 @@ function prepare_system__update_hosts_file
 	local hostIp
 	local hostEntry
 	local hostFile="/etc/hosts"
-	log "KMASTER_NODE = ${KMASTER_NODE}"
-	hostName=$(echo ${KMASTER_NODE} | jq -cr '.name')
-	if (( $? )); then abort "Failed to get master node's host name"; fi
-	hostShortName=$(echo ${hostName} | awk 'BEGIN { FS="." }; {print $1}')
-	if (( $? )); then abort "failed to get master node's host short name"; fi
-	hostIp=$(echo ${KMASTER_NODE} | jq -cr '.ipAddress')
-	if (( $? )); then abort "failed to get master node's ip address"; fi
-	hostEntry="${hostIp}\t${hostName}\t${hostShortName}"
-	log "${hostEntry}"
-	echo -e " "  >> ${hostFile}
-	echo -e "#<k8s Added by kubernetes-setup script on $(date)>"  >> ${hostFile}
-	echo -e "${hostEntry}" >> ${hostFile}
-	log "KSLAVE_NODES = ${KSLAVE_NODES}"
-	for node in $(echo ${KSLAVE_NODES} | jq -cr '.[]'); do
+	## log "KMASTER_NODE = ${KMASTER_NODE}"
+	## hostName=$(echo ${KMASTER_NODE} | jq -cr '.name')
+	## if (( $? )); then abort "Failed to get master node's host name"; fi
+	## hostShortName=$(echo ${hostName} | awk 'BEGIN { FS="." }; {print $1}')
+	## if (( $? )); then abort "failed to get master node's host short name"; fi
+	## hostIp=$(echo ${KMASTER_NODE} | jq -cr '.ipAddress')
+	## if (( $? )); then abort "failed to get master node's ip address"; fi
+	## hostEntry="${hostIp}\t${hostName}\t${hostShortName}"
+	## log "${hostEntry}"
+	## echo -e " "  >> ${hostFile}
+	echo -e "#<kubernetes-setup Added by kubernetes-setup script on $(date)>"  >> ${hostFile}
+	## echo -e "${hostEntry}" >> ${hostFile}
+	log "KNODES = ${KNODES}"
+	for node in $(echo ${KNODES} | jq -cr '.[]'); do
 		hostName=$(echo ${node} | jq -r ".name")
-		if (( $? )); then abort "Failed to get slave node's host name"; fi
+		if (( $? )); then abort "Failed to get node's host name"; fi
 		hostShortName=$(echo ${hostName} | awk 'BEGIN { FS="." }; {print $1}')
-		if (( $? )); then abort "failed to get slave node's host short name"; fi
+		if (( $? )); then abort "failed to get node's host short name"; fi
 		hostIp=$(echo ${node} | jq -r ".ipAddress")
-		if (( $? )); then abort "failed to get slave node's ip address"; fi
+		if (( $? )); then abort "failed to get node's ip address"; fi
 		hostEntry="${hostIp}\t${hostName}\t${hostShortName}" 
 		log "${hostEntry}"
 		echo -e "${hostEntry}" >> ${hostFile}
 	done 
-	echo -e "#</k8s>"  >> ${hostFile} 
+	echo -e "#</kubernetes-setup>"  >> ${hostFile} 
 }
 
 function prepare_system__add_admin_user
@@ -399,7 +405,7 @@ function prepare_system__add_admin_user
 function prepare_system__update_installed_packages
 {
 	log "Updating already installed pacakges to the lates release."
-	exeCmd "yum update -y" "Error: Failed to update installed packages."
+	yum_update
 }
 
 function prepare_system
@@ -443,41 +449,6 @@ function install_docker
 	fi 
 } 
 
-function install_container_d 
-{
-	local callStatus
-	log " "
-	log "Installing containerd prerequisites..."
-	yum_install "libseccomp btrfs-progs-devel protobuf-devel protobuf-compiler protobuf runc"
-	log "Installing & starting containerd..."
-	yum_install "containerd"
-	exeCmd "systemctl enable --now containerd"
-	exeCmd "systemctl start containerd"
-	log "Waiting for container service to be active..."
-	wait_for_service_to_be_active "containerd" 5 3
-	callStatus=$?
-	if (( ${callStatus} )); then
-		abort "containerd failed to start within specified time limit."
-	else
-		log "containerd service started."
-	fi 
-}
-
-function install_container_runtime
-{
-	case ${CONTAINER_TYPE} in
-		containerd)
-			install_container_d
-			;;
-		docker)
-			install_docker
-			;;
-		*)
-			abort "Container runtime ${CONTAINER_TYPE} is not supported"
-			;;
-	esac
-}
-
 function setup_kubernetes_repository
 {
 	log " "
@@ -491,17 +462,35 @@ function setup_kubernetes_repository
 		repo_gpgcheck=1
 		gpgkey=${KUBERNETES_REPO_GPG_KEY_URLS}
 		EOF
+	yum_update
 } 
 
 function install_kubeadm_kubelet_kubectl
 {
 	log "Installing kubeadm, kubelet, kubectl.."
-	exeCmd "yum update -y"
+	#yum_install "cri-tools kubernetes-cni"
 	yum_install "kubelet kubeadm kubectl --disableexcludes=kubernetes"
+	yum_update
 	#log "Pulling images..."
 	#exeCmd "kubeadm config images pull"
-	log "Enabling & starting kubelet..."
-	exeCmd "systemctl enable --now kubelet"
+	#log "Enabling & starting kubelet..."
+	log "Enabling kubelet..."
+	exeCmd "systemctl enable kubelet"
+	#exeCmd "systemctl start kubelet"
+	#log "Waiting for kubelet service to be active..."
+	#sleep 5
+	#wait_for_service_to_be_active "kubelet" 10 5
+	#callStatus=$?
+	#if (( ${callStatus} )); then
+	#	abort "Kubelet failed to start within specified time limit."
+	#else
+	#	log "Kubelet service started."
+	#fi 
+}
+
+function start_kubelet 
+{
+	log "Starting kubelet..."
 	exeCmd "systemctl start kubelet"
 	log "Waiting for kubelet service to be active..."
 	wait_for_service_to_be_active "kubelet" 10 5
@@ -531,7 +520,7 @@ function setup_common_items
 	else
 		prepare_system
 		install_prerequisite_packages
-		install_container_runtime
+		install_docker
 		setup_kubernetes_repository
 	fi
 	install_kubeadm_kubelet_kubectl
@@ -607,23 +596,22 @@ function setup_master_node
 	exeCmd "chown -R ${KADMIN_USER}:${KADMIN_USER_GROUP} /home/${KADMIN_USER}/.kube/config"
 	
 	log "Setting up POD network"
-	exeCmd_asAdminUser "kubectl apply -f ${CALICO_YAML_URL}"
-
+	exeCmd_asAdminUser "kubectl apply -f ${CALICO_YAML_URL}" 
+	start_kubelet 
 	if (( ${SETUP_DASHBOARD} == ${TRUE} )); then
 		setup_dashboard
 		get_dashboard_url_and_login_token
 	fi
-	generate_slave_node_cluster_join_command
-
+	generate_slave_node_cluster_join_command 
 	log_end_setup 
-}
-
+} 
 
 function setup_slave_node
 {
 	log_start_setup 
 	setup_common_items
 	slave_node__join_cluster 
+	start_kubelet
 	log_end_setup 
 }
 
