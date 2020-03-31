@@ -468,24 +468,10 @@ function setup_kubernetes_repository
 function install_kubeadm_kubelet_kubectl
 {
 	log "Installing kubeadm, kubelet, kubectl.."
-	#yum_install "cri-tools kubernetes-cni"
-	yum_install "kubelet kubeadm kubectl --disableexcludes=kubernetes"
+	yum_install "kubelet-${KUBERNETES_VERSION} kubeadm-${KUBERNETES_VERSION} kubectl-${KEBERNETES_VERSION} --disableexcludes=kubernetes"
 	yum_update
-	#log "Pulling images..."
-	#exeCmd "kubeadm config images pull"
-	#log "Enabling & starting kubelet..."
 	log "Enabling kubelet..."
 	exeCmd "systemctl enable kubelet"
-	#exeCmd "systemctl start kubelet"
-	#log "Waiting for kubelet service to be active..."
-	#sleep 5
-	#wait_for_service_to_be_active "kubelet" 10 5
-	#callStatus=$?
-	#if (( ${callStatus} )); then
-	#	abort "Kubelet failed to start within specified time limit."
-	#else
-	#	log "Kubelet service started."
-	#fi 
 }
 
 function start_kubelet 
