@@ -675,7 +675,7 @@ function get_slave_node_cluster_join_command
 		log "Trying to copy the file from master node..."
 		scp root@${KMASTER_IP_ADDRESS}:/root/${KSLAVE_CLUSTER_JOIN_COMMNAD_FILE} . 
 		if (( $? )); then
-			abort "Failed to copy the salve node's cluster command file from the master node."
+			abort "Failed to copy the salve node's cluster join command file from the master node."
 		fi
 	fi
 }
