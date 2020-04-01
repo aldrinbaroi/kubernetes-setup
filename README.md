@@ -30,8 +30,7 @@ KADMIN_USER         Admin user's login ID
 KADMIN_PASSWORD     Admin user's login password
 ```
 **Notes:** 
-1) Values for KMASTER_NODE & KSLAVE_NODES must be in valid JSON format.
-2) Admin user will be created if the user doesn't exists.
+Admin user will be created if the user doesn't exists.
 
 **Example:**
 
