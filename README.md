@@ -1,5 +1,5 @@
 # kubernetes-setup-centos7
-Script to setup Kubernetes cluster using CALICO POD network on CentOS 7 
+Script to setup Kubernetes cluster on CentOS 7 
 
 **kubernetes-setup usage:**
 ```      
