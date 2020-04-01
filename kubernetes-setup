@@ -10,6 +10,9 @@
 readonly CURRENT_DIR="$(pwd)"
 
 readonly DEFAULT_KNODE_NAME="$(hostname)"
+readonly DEFAULT_SERVICE_ACCOUNT="kubernetes-admin"
+readonly DEFAULT_CLUSTER_NAME="kubernetes"
+readonly DEFAULT_CONTEXT_NAME="${DEFAULT_SERVICE_ACCOUNT}@${DEFAULT_CLUSTER_NAME}"
 readonly DEFAULT_LOG_DIR="${CURRENT_DIR}"
 readonly DEFAULT_LOG_FILE_NAME="kubernetes-setup.log"
 readonly DEFAULT_LOG_TAG="K8S Setup"
@@ -42,6 +45,11 @@ KNODE_IFACE=""
 KNODE_IP=""
 KMASTER_NODE="notset"
 KSLAVE_NODES="notset"
+
+KADMIN_SERVICE_ACCOUNT=
+CLUSTER_NAME=
+CONTEXT_NAME=
+KUBECONFIG_FILE=
 
 SETUP_DASHBOARD=${FALSE}
 
@@ -200,6 +208,10 @@ function load_setup_configuration
 	if (( $? )); then
 		abort "Failed to load setup configuration from [${SETUP_CONFIG_FILE}] file"
 	fi
+	KADMIN_SERVICE_ACCOUNT=${KADMIN_SERVICE_ACCOUNT:-${DEFAULT_SERVICE_ACCOUNT}}
+	CLUSTER_NAME=${CLUSTER_NAME:-${DEFAULT_CLUSTER_NAME}}
+	CONTEXT_NAME=${KADMIN_SERVICE_ACCOUNT}@${CLUSTER_NAME}
+	KUBECONFIG_FILE=${CONTEXT_NAME}.kubeconfig
 } 
 
 function is_service_active
@@ -351,18 +363,11 @@ function prepare_system__update_hosts_file
 	local hostIp
 	local hostEntry
 	local hostFile="/etc/hosts"
-	## log "KMASTER_NODE = ${KMASTER_NODE}"
-	## hostName=$(echo ${KMASTER_NODE} | jq -cr '.name')
-	## if (( $? )); then abort "Failed to get master node's host name"; fi
-	## hostShortName=$(echo ${hostName} | awk 'BEGIN { FS="." }; {print $1}')
-	## if (( $? )); then abort "failed to get master node's host short name"; fi
-	## hostIp=$(echo ${KMASTER_NODE} | jq -cr '.ipAddress')
-	## if (( $? )); then abort "failed to get master node's ip address"; fi
-	## hostEntry="${hostIp}\t${hostName}\t${hostShortName}"
-	## log "${hostEntry}"
-	## echo -e " "  >> ${hostFile}
+	if [ ! -f /etc/hosts.kubernetes-setup ]; then
+		execCmd "cp /etc/hosts /etc/hosts.kubernetes-setup"
+	fi
+	execCmd "cp /etc/hosts.kubernetes-setup /etc/hosts"
 	echo -e "#<kubernetes-setup Added by kubernetes-setup script on $(date)>"  >> ${hostFile}
-	## echo -e "${hostEntry}" >> ${hostFile}
 	log "KNODES = ${KNODES}"
 	for node in $(echo ${KNODES} | jq -cr '.[]'); do
 		hostName=$(echo ${node} | jq -r ".name")
@@ -516,10 +521,6 @@ function setup_dashboard
 {
 	log "Setting up Kubernetes dashboard"
 	exeCmd_asAdminUser "kubectl create -f ${KUBERNETES_DASHBOARD_YAML_URL}"
-	log "Creating service account for dashbaord"
-	exeCmd_asAdminUser "kubectl create serviceaccount dashboard -n default"
-	log "Adding cluster binding rules for roles on dashboard"
-	exeCmd_asAdminUser "kubectl create clusterrolebinding dashboard-admin -n default --clusterrole=cluster-admin --serviceaccount=default:dashboard"
 
 	log "Exposing dashboard on NodePort..."
 	exeCmd_asAdminUser "kubectl patch svc kubernetes-dashboard --type=json -p "'"[{\"op\":\"replace\",\"path\":\"/spec/type\",\"value\":\"NodePort\"}]"'" --namespace=${KDASHBOARD_NAMESPACE}"
@@ -540,7 +541,7 @@ function get_dashboard_url_and_login_token
 	exeCmd_asAdminUser "k8sdbp=\$(kubectl -n ${KDASHBOARD_NAMESPACE} get service kubernetes-dashboard --no-headers | awk "'"{print \$5}"'" | sed -r "'"s/(.*[:])([0-9]+)([/].*)/\\2/"'"); echo \"The dashboard can be accessed at https://${KMASTER_IP_ADDRESS}:\${k8sdbp}\" | tee -a ${tmpFile}"
 	echo " " >> ${tmpFile} 
 	log " "
-	exeCmd_asAdminUser "dblt=\$(kubectl get secret \$(kubectl get serviceaccount dashboard -o jsonpath='{.secrets[0].name}') -o jsonpath='{.data.token}' | base64 --decode); echo \"Dashboard login token: \${dblt}\" | tee -a ${tmpFile}"
+	exeCmd_asAdminUser "dblt=\$(kubectl get secret \$(kubectl get serviceaccount ${KADMIN_SERVICE_ACCOUNT} -o jsonpath='{.secrets[0].name}') -o jsonpath='{.data.token}' | base64 --decode); echo \"Dashboard login token: \${dblt}\" | tee -a ${tmpFile}"
 	cat ${tmpFile} > ${KDASHBOARD_LOGIN_INFO_FILE} 
 	rm -f ${tmpFile} > /dev/null 
 	log " "
@@ -566,6 +567,68 @@ function slave_node__join_cluster
 	exeCmd "bash ${clusterJoinCmdFile}; if (( \$? )); then echo 'Failed to join the cluster'; else echo 'Successfully joined the cluster'; fi"
 }
 
+function read_data 
+{
+	local dataFile=${1}
+	read line < ${dataFile}
+	echo ${line} 
+}
+
+function read_file
+{
+        local dataFile=${1}
+        local line
+        local fileData=""
+        while read line; do
+                fileData+="${line}\n"
+        done < ${dataFile}
+        echo ${fileData}
+} 
+
+function generate_kubeconfig_file
+{
+	local KADMIN_SERVICE_ACCOUNT_SECRET_NAME=""
+	local KADMIN_SERVICE_ACCOUNT_CERTIFICATE=""
+	local KADMIN_SERVICE_ACCOUNT_TOKEN=""
+        local KUBECONFIG_DATA_FILE=/tmp/kubeconfig_data  
+
+	# Generate service account login "kubeconfig" file
+	log " "
+	log "Generating service account [${KADMIN_SERVICE_ACCOUNT}] kubeconfig file: ${KUBECONFIG_FILE} ..."
+	sleep 3
+	log "Getting service account secret name..."
+	exeCmd_asAdminUser "kubectl get serviceaccount ${KADMIN_SERVICE_ACCOUNT} -n default -o jsonpath='{.secrets[0].name}' > ${KUBECONFIG_DATA_FILE}" \
+			   "Failed to get service account secret key name" 
+	KADMIN_SERVICE_ACCOUNT_SECRET_NAME=$(read_data ${KUBECONFIG_DATA_FILE}) 
+	log "Getting service account certificate & token..."
+	exeCmd_asAdminUser "kubectl get secret ${KADMIN_SERVICE_ACCOUNT_SECRET_NAME} -n default -o json > ${KUBECONFIG_DATA_FILE}" \
+			   "Failed to get service account certificate & token"
+	KADMIN_SERVICE_ACCOUNT_CERTIFICATE=$(cat ${KUBECONFIG_DATA_FILE} | jq -cr .data.\"ca.crt\")
+	KADMIN_SERVICE_ACCOUNT_TOKEN=$(cat ${KUBECONFIG_DATA_FILE} | jq -cr .data.token | base64 --decode) 
+	rm -f ${KUBECONFIG_DATA_FILE} > /dev/null 2>&1
+
+	cat <<-EOF > ${KUBECONFIG_FILE}
+	apiVersion: v1
+	kind: Config
+	clusters:
+	  - cluster:
+	      certificate-authority-data: ${KADMIN_SERVICE_ACCOUNT_CERTIFICATE}
+	      server: https://${KMASTER_IP_ADDRESS}
+	    name: ${CLUSTER_NAME}
+	contexts:
+	  - context:
+	      cluster: ${CLUSTER_NAME}
+	      namespace: default
+	      user: ${KADMIN_SERVICE_ACCOUNT}
+	    name: ${CONTEXT_NAME}
+	current-context: ${CONTEXT_NAME}
+	users:
+	  - name: ${KADMIN_SERVICE_ACCOUNT}
+	    user:
+	      token: ${KADMIN_SERVICE_ACCOUNT_TOKEN}
+	EOF
+}
+
 function setup_master_node
 {
 	log_start_setup 
@@ -580,7 +643,18 @@ function setup_master_node
 	exeCmd_asAdminUser "mkdir -p ${KADMIN_USER_HOME}/.kube"
 	exeCmd "cp /etc/kubernetes/admin.conf ${KADMIN_USER_HOME}/.kube/config"
 	exeCmd "chown -R ${KADMIN_USER}:${KADMIN_USER_GROUP} /home/${KADMIN_USER}/.kube/config"
+
+	log " "
+	log "Creating service account [${KADMIN_SERVICE_ACCOUNT}]..."
+	exeCmd_asAdminUser "kubectl create serviceaccount ${KADMIN_SERVICE_ACCOUNT} -n default"
+	log "Adding cluster admin role binding rule..."
+	exeCmd_asAdminUser "kubectl create clusterrolebinding cluster-admin-role -n default --clusterrole=cluster-admin --serviceaccount=default:${KADMIN_SERVICE_ACCOUNT}"
+
+	log " "
+	log "Generating kubeconfig file..."
+	generate_kubeconfig_file
 	
+	log " "
 	log "Setting up POD network"
 	exeCmd_asAdminUser "kubectl apply -f ${CALICO_YAML_URL}" 
 	start_kubelet 
@@ -612,7 +686,7 @@ function prepare_for_reinstall
 	log "Stopping all kubernetes processes..."
 	[[ $(pgrep "master") ]]    && exeCmd 'pkill master'
 	[[ $(pgrep "kubelet") ]]   && exeCmd 'pkill kubelet'
-	[[ $(pgrep "kube-api") ]] && exeCmd 'pkill "kube-api*"'
+	[[ $(pgrep "kube-api") ]]  && exeCmd 'pkill "kube-api*"'
 	[[ $(pgrep "etcd") ]]      && exeCmd 'pkill etcd'
 	log "Stopping all docker containers..." 
 	if (( $(docker container ps -aq | wc -l) > 0 )); then
@@ -652,24 +726,9 @@ function prepare_for_reinstall
 	exeCmd 'rm -rf /var/lib/kube*'
 }
 
-function run_setup
-{
-	case $nodeType in
-		master)
-			setup_master_node
-			;;
-		slave)
-			setup_slave_node
-			;;
-		*)
-			show_usage "Invalid node type: ${nodeType}"
-			;;
-	esac 
-}
-
 # __main__ 
 
-readonly OPTIONS=":bjsrt:n:i:a:u:cd:h"
+readonly OPTIONS=":bjsrt:n:i:a:cd:h"
 getopts "${OPTIONS}" opt ${@}
 case $opt in
 	b)
@@ -702,9 +761,6 @@ case $opt in
                                         ;;
                                 a)
                                         nodeIp=${OPTARG}
-                                        ;;
-                                u)
-                                        nodeUser=${OPTARG}
                                         ;;
                                 c)
                                         SETUP_DASHBOARD=${TRUE}
