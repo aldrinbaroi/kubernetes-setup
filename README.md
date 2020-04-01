@@ -10,7 +10,7 @@ kubernetes-setup -b | -j | [-s|-r] SETUP_OPTIONS | -h
 -s|-r  Setup/reinstall kubernetes node (master|slave)
 -h     Show this usage text
          
-SETUP_OPTIONS: -t node-type [-n node-name] [-i node-iface -a node-ip] [-u node-user] [-c] [-d log-dir]
+SETUP_OPTIONS: -t node-type [-n node-name] [-i node-iface -a node-ip] [-c] [-d log-dir]
          
 -t node-type    Kubernetes node type [master|slave]
 -n node-name    Kubernetes node's host name
