@@ -77,13 +77,12 @@ function show_usage
 	echo "    -s|-r  Setup/reinstall Kubernetes node (master|slave)"
         echo "    -h     Show this usage text"
         echo " "
-        echo "    SETUP_OPTIONS: -t node-type [-n node-name] [-i node-iface -a node-ip] [-u node-user] [-c] [-d log-dir]"
+        echo "    SETUP_OPTIONS: -t node-type [-n node-name] [-i node-iface -a node-ip] [-c] [-d log-dir]"
         echo " "
         echo "      -t node-type    Kubernetes node type [master|slave]"
 	echo "      -n node-name    Kubernetes node's host name (override config file)"
 	echo "      -i node-iface   Kubernetes node's network interface name (changes node's IP address)"
 	echo "      -a node-ip      IP address & netmask  Ex:  172.16.0.2/255.255.0.0"
-	echo "      -u node-user    Kubernetes admin user other than 'root' for running kubectl (override config file)"
 	echo "      -c              Setup dashboard. Only applies to master node. By default dashboard is not setup"
 	echo "      -d log-dir      Overrides default log directory" 
         echo " "
@@ -666,9 +665,25 @@ function setup_master_node
 	log_end_setup 
 } 
 
+function get_slave_node_cluster_join_command
+{
+	
+	if [ ! -f ${KSLAVE_CLUSTER_JOIN_COMMNAD_FILE} ]; then
+		clear
+		log " "
+		log "Slave node's cluster join command file not found."
+		log "Trying to copy the file from master node..."
+		scp root@${KMASTER_IP_ADDRESS}:/root/${KSLAVE_CLUSTER_JOIN_COMMNAD_FILE} . 
+		if (( $? )); then
+			abort "Failed to copy the salve node's cluster command file from the master node."
+		fi
+	fi
+}
+
 function setup_slave_node
 {
 	log_start_setup 
+	get_slave_node_cluster_join_command
 	setup_common_items
 	slave_node__join_cluster 
 	start_kubelet
