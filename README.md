@@ -35,11 +35,11 @@ Admin user will be created if the user doesn't exists.
 **Example:**
 
 Setup master node
-
 ```
-kubernetes-setup -s -t master
+kubernetes-setup -s -t master -n kmaster
 ```
 Setup slave node
 ```
-kubernetes-setup -s -t slave
+kubernetes-setup -s -t slave -n kslave1
 ```
+**Note:** Please make sure node name matches to what you defined in the config file.
