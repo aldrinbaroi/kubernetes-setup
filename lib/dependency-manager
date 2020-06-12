@@ -1,0 +1,54 @@
+#!/bin/bash
+#
+# Dependency Manager 
+#
+
+__getFileFromGitRepo()
+{
+    local repoOwner=${1}
+    local repoName=${2}
+    local releaseTag=${3}
+    local fileName=${4}
+    local saveDirectory=${5}
+    local resourceUrl="https://raw.githubusercontent.com/${repoOwner}/${repoName}/${releaseTag}/${fileName}"
+    curl -f -s -o "${saveDirectory}/${fileName}" "${resourceUrl}" 
+    if (( $? )); then
+        echo "Failed to get [${fileName}] file from the repository."
+        return 1
+    fi
+}
+
+__loadDependencies()
+{
+    local repoOwner
+    local repoName
+    local releaseTag
+    local fileName
+    local saveDirectory="lib"
+    local dependencyRec
+    while IFS= read line || [ -n "${line}" ]; do
+        dependencyRec=(${line//,/ })
+        repoOwner=${dependencyRec[0]}
+        repoName=${dependencyRec[1]}
+        releaseTag=${dependencyRec[2]}
+        fileName=${dependencyRec[3]}
+        if [ ! -f "lib/${fileName}" ]; then    
+            echo "Loading dependency: ${fileName}"
+            __getFileFromGitRepo "${repoOwner}" "${repoName}" "${releaseTag}" "${fileName}" "${saveDirectory}" 
+            if (( $? )); then
+                echo "Failed to retrieve dependency: ${fileName}.  Aborting..."
+                exit 1
+            fi
+        fi
+        source "lib/${fileName}"
+    done < lib/dependencies.list  
+    if (( $? )); then
+        echo "Error loading dependencies"
+        exit 1
+    fi
+}
+
+__loadDependencies
+
+#::END:: 
+

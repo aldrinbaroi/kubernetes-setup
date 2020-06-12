@@ -6,6 +6,14 @@
 # 
 #
 
+source lib/dependency-manager
+
+readonly DISTRO=$(getDistroType)
+if [[ "${DISTRO}" == "ubuntu" ]]; then
+	DOCKER_PKG_NAME="docker.io"
+else
+	DOCKER_PKG_NAME="docker"
+fi
 
 readonly CURRENT_DIR="$(pwd)"
 
@@ -13,9 +21,6 @@ readonly DEFAULT_KNODE_NAME="$(hostname)"
 readonly DEFAULT_SERVICE_ACCOUNT="kubernetes-admin"
 readonly DEFAULT_CLUSTER_NAME="kubernetes"
 readonly DEFAULT_CONTEXT_NAME="${DEFAULT_SERVICE_ACCOUNT}@${DEFAULT_CLUSTER_NAME}"
-readonly DEFAULT_LOG_DIR="${CURRENT_DIR}"
-readonly DEFAULT_LOG_FILE_NAME="kubernetes-setup.log"
-readonly DEFAULT_LOG_TAG="K8S Setup"
 
 readonly PREREQUISTE_PACKAGES="openssh-server socat"
 readonly NET_FILTER_MODULE_NAME="br_netfilter"
@@ -24,17 +29,10 @@ readonly KSLAVE_CLUSTER_JOIN_COMMNAD_FILE="kslave-cluster-join-command"
 readonly KDASHBOARD_LOGIN_INFO_FILE="kubernetes-dashboard-login.info" 
 readonly KDASHBOARD_NAMESPACE="kubernetes-dashboard"
 
-readonly VALID_USER=1
-readonly INVALID_USER=0
 readonly TRUE=1
 readonly FALSE=0
 readonly ERROR=1
 readonly OK=0 
-
-LOG_DIR="${DEFAULT_LOG_DIR}"
-LOG_FILE="${LOG_DIR}/{${DEFAULT_LOG_FILE_NAME}"
-LOG_TAG="${DEFAULT_LOG_TAG}"
-LOG_TAG="${DEFAULT_LOG_TAG}"
 
 KADMIN_USER="notset"
 KADMIN_USER_GROUP="notset"
@@ -53,13 +51,11 @@ KUBECONFIG_FILE=
 
 SETUP_DASHBOARD=${FALSE}
 
-LOG=TRUE
-
 nodeType=""
 nodeUser=""
 REINSTALL=${FALSE}
 
-function show_usage
+showUsage()
 {
         local msg=$1
         if [ ! -z "$msg" ]; then
@@ -88,117 +84,15 @@ function show_usage
         echo " "
 }
 
-function set_log_tag
+exeCmd_asAdminUser()
 {
-        LOG_TAG=$1
-}
-
-function new_log_file
-{
-	local backupLogFile=""
-	if [ -f "${LOG_FILE}" ]; then
-		backupLogFile="${LOG_FILE}-$(ls --full-time ${LOG_FILE} | awk '{ print $6"_"$7 }' | sed 's/[.].*$//')"
-		if (( $(cp ${LOG_FILE} ${backupLogFile}; echo $?) )); then
-			echo "WARN: Failed to create backup of the previous log file"
-		fi
-	fi
-	if (( $(cat /dev/null > ${LOG_FILE}; echo $?) )); then
-		echo "Failed to create/clear the log file [${LOG_FILE}]"
-		echo "Exiting..."
-		exit 1
-	fi
-}
-
-function log_enable
-{
-	LOG=TRUE
-}
-
-function log_disable
-{
-	LOG=FALSE
-}
-
-function log
-{
-	if (( LOG )); then
-		echo -e "${1}" | tee -a ${LOG_FILE} 
-	else
-		echo -e "${1}" 
-	fi 
-}
-
-function log_pipe
-{
-        while read message; do
-                log "${message}"
-        done
-}
-
-function abort
-{
-        log "${1}"
-        log "Aborting..."
-        exit 1
-}
-
-function exeCmd
-{
-        local cmd=$1
-	local errorMsg=$2
-	local successMsg=$3 
-	set -e
-	set -o pipefail 
-        if [ ! -z "${cmd}" ]; then
-		if [ -z "${errorMsg}" ]; then
-			errorMsg="Error: Command execution failed. Command: [${cmd//\"/\\\"}]"
-		else
-			errorMsg="${errorMsg//\"/\\\"}"
-		fi
-		if [ -z "${successMsg}" ]; then
-			successMsg=""
-		else
-			successMsg="${successMsg//\"/\\\"}"
-		fi
-		local _CMD="${cmd}; 
-		            if (( \$? )); then 
-				    echo \"${errorMsg}\";
-				    echo 'Aborting...';
-				    exit 1;
-			    else
-				    if [ ! -z \"${successMsg}\" ]; then
-					    echo \"${successMsg}\";
-				    fi;
-			    fi"
-		bash -c "${_CMD}" 2>&1 | log_pipe
-        fi
-	set +o pipefail 
-	set +e
-}
-
-function exeCmd_asAdminUser
-{
-        local cmd=$1
+	local cmd=$1
 	local errorMsg=$2
 	local successMsg=$3
-        if [ ! -z "${cmd}" ]; then
-		local _CMD="runuser -l ${KADMIN_USER} -c '${cmd}'"
-		exeCmd "${_CMD}" "${errorMsg}" "${successMsg}"
-        fi
+	exeCmd_asUser "${KADMIN_USER}" "${cmd}" "${errorMsg}" "${successMsg}"
 } 
 
-function yum_install
-{
-	local packages=$1
-	exeCmd "yum install -y ${packages}" "Error: Failed to install packages: ${packages}"
-} 
-
-function yum_update
-{
-	exeCmd "yum update -y" "Error: Failed to update installed packages"
-} 
-
-function load_setup_configuration
+load_setup_configuration()
 {
 	if [ ! -f "${SETUP_CONFIG_FILE}" ]; then
 		abort "Setup configration file [${SETUP_CONFIG_FILE}] not found in the current directory."
@@ -213,49 +107,7 @@ function load_setup_configuration
 	KUBECONFIG_FILE=${CONTEXT_NAME}.kubeconfig
 } 
 
-function is_service_active
-{
-        local service=$1
-        if [ ! -z ${service} ]; then
-                if (( $(systemctl is-active -q ${service} > /dev/null 2>&1; echo $?) == 0 )); then
-                        echo ${TRUE}
-                else
-                        echo ${FALSE}
-                fi
-        else
-                echo ${FALSE}
-        fi
-} 
-
-function wait_for_service_to_be_active
-{
-        local service=$1
-	local maxCheckCount=$2
-	local checkInterval=$3
-        for checkCount in $(seq 1 ${maxCheckCount}); do
-                if (( ! $(is_service_active ${service}) )); then
-                        log "Wating ${checkInterval} seconds for ${service} to become active..."
-                        sleep ${checkInterval}
-                fi
-        done
-        if (( ! $(is_service_active ${service}) )); then
-                return ${ERROR}
-        fi
-}
-
-
-function install_required_tool__jq
-{
-	yum_install "epel-release"
-	yum_install "jq"
-}
-
-function install_optional_tool__ifconfig
-{
-	yum_install "net-tools"
-}
-
-function prepare_system__set_hostname
+prepare_system__set_hostname()
 {
 	if [[ ! -z "${KNODE_NAME}" ]]; then
 		log "Changing & setting host name to ${KNODE_NAME}..."
@@ -263,7 +115,7 @@ function prepare_system__set_hostname
 	fi
 }
 
-function prepare_system__set_ip_address
+prepare_system__set_ip_address()
 {
 	local ipAddress
 	local netmask
@@ -273,7 +125,6 @@ function prepare_system__set_ip_address
 		ipAddress=$(echo ${KNODE_IP} | awk 'BEGIN {FS="/"}; {print $1}')
 		netmask=$(echo ${KNODE_IP} | awk 'BEGIN {FS="/"}; {print $2}')
 		if [[ ! -z "${ipAddress}" ]] && [[ ! -z "${netmask}" ]]; then
-			#exeCmd "sed -i -r 's/(IPADDR=\")(.*)(\")/\1'${ipAddress}'\3/; s/(NETMASK=\")(.*)(\")/\1'${netmask}'\3/' ${ifcfgFile}"
 			exeCmd "sed -i 's/IPADDR=.*/IPADDR=${ipAddress}/; s/NETMASK=.*/NETMASK=${netmask}/' ${ifcfgFile}"
 			exeCmd "systemctl restart network"
 		else
@@ -282,28 +133,20 @@ function prepare_system__set_ip_address
 	fi
 }
 
-function is_selinux_disabled 
-{
-	if [ "$(getenforce)" = "Disabled" ]; then
-		echo ${TRUE}
-	else
-		echo ${FALSE}
-	fi
-}
-
-function prepare_system__disable_selinux
+prepare_system__set_selinux_permissive()
 {
 	log " "
-	log "Disabling SELINUX system..."
-	if (( $(is_selinux_disabled) )); then
-		log "SELINUX system is already disabled."
+	log "Setting SELinux system to permissive mode..." 
+	if (( $(isSelinuxPermissive) )); then
+		log "SELinux system is already set to permissive."
 	else
-		exeCmd "setenforce 0"
-		exeCmd "sed -i s/^SELINUX=enforcing$/SELINUX=permissive/ /etc/selinux/config"
+		exeFunc "setSelinuxPermissive" \
+			"Failed to set SELinux to permissive" \
+			"Successfully set SELinux to permissive"
 	fi
 }
 
-function prepare_system__enable_bridge_network
+prepare_system__enable_bridge_network()
 {
 	log " "
 	log "Enabling bridge network... "
@@ -312,7 +155,7 @@ function prepare_system__enable_bridge_network
 		${NET_FILTER_MODULE_NAME}
 		EOF
 	log "  Loading netfilter module..."
-	exeCmd "modprobe br_netfilter" 
+	exeCmd "modprobe br_netfilter > /dev/null 2>&1" 
 	exeCmd "sleep 5"
 
 	log " "
@@ -322,38 +165,57 @@ function prepare_system__enable_bridge_network
 		net.bridge.bridge-nf-call-iptables = 1
 		net.ipv4.ip_forward = 1
 		EOF
-	exeCmd "sysctl --system"
+	exeCmd "sysctl --system > /dev/null 2>&1"
 	exeCmd "sleep 5"
 }
 
-function prepare_system__disable_swap_space
+prepare_system__disable_swap_space()
 {
 	log " "
 	log "Disabling swap space..."
-	exeCmd "swapoff -a"
-	exeCmd "sed -i /swap/s/^/#***disabled-for-kubernetes***/ /etc/fstab"
+	if (( $(isSwapEnabled) )); then
+		log "Swap sapace is enabled. Disabling it..."
+		exeFunc "disableSwap" \
+			 "Failed to disable swap space" \
+			 "Successfully disabled swap space"
+	else
+		log "Swap space is already disabled"
+	fi
 }
 
-function prepare_system__disable_firewall
+prepare_system__disable_firewall()
 {
 	log " "
-	log "Disabling firewall..."
-	exeCmd "systemctl stop firewalld"
-	exeCmd "systemctl disable firewalld"
-	exeCmd "systemctl mask --now firewalld"
+	log "Disabling firewall service..."
+	if (( $(isFirewallEnabled) )); then
+		if (( $(isFirewallActive) )); then
+			log "Firewall service is running."
+			log "Stopping firewall service..."
+			exeFunc "stopFirewall" \
+				"Failed to stop firewall service. Cannot disable." \
+				"Successfully stopped firewall"
+		fi
+		exeFunc "disableFirewall" \
+			"Failed to disable firewall" \
+			"Successfully disabled firewall"
+	else
+		log "Firewall is already disabled"
+	fi
 }
 
-function prepare_system__install_required_tools
+prepare_system__install_required_tools()
 {
 	log " "
 	log "Installing required tool [jq]..."
-	install_required_tool__jq
+	if [[ "${DISTRO}" != "ubuntu" ]]; then
+		packageManager_install_ext "epel-release"
+	fi
+	packageManager_install_ext "jq"
 	log " "
 	log "Installing tool [ifconfig]..."
-	install_optional_tool__ifconfig
 }
 
-function prepare_system__update_hosts_file
+prepare_system__update_hosts_file()
 {
 	log " "
 	log "Updating [/etc/hosts] file with k8s master & slave node names..."
@@ -362,11 +224,18 @@ function prepare_system__update_hosts_file
 	local hostIp
 	local hostEntry
 	local hostFile="/etc/hosts"
-	if [ ! -f /etc/hosts.kubernetes-setup ]; then
-		execCmd "cp /etc/hosts /etc/hosts.kubernetes-setup"
+	local tempHostFile="/tmp/hosts"
+	local preK8sSetupHostFile="/etc/hosts.pre-kubernetes-setup"
+	if [ -f /etc/hosts.pre-kubernetes-setup ]; then
+		exeCmd "cp ${preK8sSetupHostFile} ${hostFile}"
+	else
+		exeCmd "cp ${hostFile} ${preK8sSetupHostFile}"
 	fi
-	execCmd "cp /etc/hosts.kubernetes-setup /etc/hosts"
-	echo -e "#<kubernetes-setup Added by kubernetes-setup script on $(date)>"  >> ${hostFile}
+	echo -e "#"
+	echo -e "# <kubernetes-setup>"
+	echo -e "#"
+	echo -e "#   Added by kubernetes-setup script on $(date)>"  > ${tempHostFile}
+	echo -e "#"
 	log "KNODES = ${KNODES}"
 	for node in $(echo ${KNODES} | jq -cr '.[]'); do
 		hostName=$(echo ${node} | jq -r ".name")
@@ -377,48 +246,48 @@ function prepare_system__update_hosts_file
 		if (( $? )); then abort "failed to get node's ip address"; fi
 		hostEntry="${hostIp}\t${hostName}\t${hostShortName}" 
 		log "${hostEntry}"
-		echo -e "${hostEntry}" >> ${hostFile}
+		echo -e ${hostEntry} >> ${tempHostFile}
 	done 
-	echo -e "#</kubernetes-setup>"  >> ${hostFile} 
+	echo -e "#"
+	echo -e '#</kubernetes-setup>'  >> ${tempHostFile}
+	echo -e "#"
+	cat ${tempHostFile} >> ${hostFile}
 }
 
-function prepare_system__add_admin_user
+prepare_system__add_admin_user()
 {
-	local encpw
 	log ""
-	log "Checking if K8S admin user [${KADMIN_USER}] exist..."
-	if (( $(id -u ${KADMIN_USER} > /dev/null 2>&1; echo $?) )); then
-		log "${KADMIN_USER} user doesn't exist.  Adding the user with default password: ${KADMIN_USER}." 
-		encpw=$(openssl passwd -crypt ${KADMIN_PASSWORD})
-		if (( $? )); then
-			abort "Failed to generate encrypted passwd using openssl"
-		else
-			if (( $(useradd -m -p ${encpw} ${KADMIN_USER}; echo $?) )); then
-				abort "Failed to add admin user"
-			else
-				log "Added admin user successfully."
-			fi
-		fi
+	log "Adding K8S admin user:[${KADMIN_USER}]..."
+	if (( $(addUser "${KADMIN_USER}" "${KADMIN_PASSWORD}") )); then
+		KADMIN_USER_GROUP=${KADMIN_USER}
+		KADMIN_USER_HOME=$(getUserHome "${KADMIN_USER}")
+		log "Successfully added Kubernetes admin user"
 	else
-		log "Admin user exist."
+		log "ERROR CODE: $?"
+		abort "Failed to add Kubernetes admin user"
 	fi
-	KADMIN_USER_GROUP=${KADMIN_USER}
-	KADMIN_USER_HOME=$(getent passwd ${KADMIN_USER} | awk 'BEGIN {FS=":"}; {print $6}')
 }
 
-function prepare_system__update_installed_packages
+prepare_system__update_installed_packages()
 {
-	log "Updating already installed pacakges to the lates release."
-	yum_update
+	log "Updating already installed pacakges to the latest release."
+	packageManager_update_ext
 }
 
-function prepare_system
+prepare_system()
 {
 	log " "
 	log "Preparing the system..." 
 	prepare_system__set_hostname
 	prepare_system__set_ip_address
-	prepare_system__disable_selinux
+	if [[ "${DISTRO}" == "ubuntu" ]]; then
+		log "Disabling AppArmor..."
+		exeCmd "stopService apparmor"
+		exeCmd "disableService apparmor"
+		log "Successfully disabled AppArmor"
+	else
+		prepare_system__set_selinux_permissive
+	fi
 	prepare_system__enable_bridge_network
 	prepare_system__disable_swap_space
 	prepare_system__disable_firewall
@@ -428,82 +297,98 @@ function prepare_system
 	prepare_system__update_installed_packages
 } 
 
-function install_prerequisite_packages
+install_prerequisite_packages()
 {
 	log " "
 	log "Installing prerequisite packages"
-	yum_install "${PREREQUISTE_PACKAGES}" 
+	packageManager_install_ext "${PREREQUISTE_PACKAGES}" 
 }
 
-function install_docker
+install_docker()
 {
 	local callStatus
 	log " "
 	log "Installing & starting Docker..."
-	yum_install "docker"
-	exeCmd "systemctl enable --now docker"
-	exeCmd "systemctl start docker"
+	packageManager_install_ext "${DOCKER_PKG_NAME}"
+	exeFunc "enableService docker" "Failed to enable docker service" "Enabled docker service" 
+	exeFunc "startService docker" "Failed to start docker service" "Starting docker service" 
 	log "Waiting for docker service to be active..."
-	wait_for_service_to_be_active "docker" 5 3
-	callStatus=$?
-	if (( ${callStatus} )); then
-		abort "Docker failed to start within specified time limit."
+	waitForServiceToBeActive docker 5 3
+	if (( $? )); then
+		abort "Docker failed to start within specified time limit." 
 	else
 		log "Docker service started."
-	fi 
+	fi
 } 
 
-function setup_kubernetes_repository
+setup_kubernetes_repository()
 {
 	log " "
 	log "Setting up kubernetes repository..."
-	cat <<-EOF > /etc/yum.repos.d/kubernetes.repo
-		[kubernetes]
-		name=Kubernetes
-		baseurl=${KUBERNETES_REPO_URL}
-		enabled=1
-		gpgcheck=1
-		repo_gpgcheck=1
-		gpgkey=${KUBERNETES_REPO_GPG_KEY_URLS}
-		EOF
-	yum_update
+	case "${DISTRO}" in
+		ubuntu)
+			exeCmd "curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add - "
+			cat <<-EOF > /etc/apt/sources.list.d/kubernetes.list
+				deb https://apt.kubernetes.io/ kubernetes-xenial main
+			EOF
+			(( $? )) && abort "Failed to add kubernetes repository"
+			;;
+		centos|redhat)
+			cat <<-EOF > /etc/yum.repos.d/kubernetes.repo
+				[kubernetes]
+				name=Kubernetes
+				baseurl=${KUBERNETES_REPO_URL}
+				enabled=1
+				gpgcheck=1
+				repo_gpgcheck=1
+				gpgkey=${KUBERNETES_REPO_GPG_KEY_URLS}
+			EOF
+			(( $? )) && abort "Failed to add kubernetes repository"
+			;;
+	esac
+	packageManager_update_ext
 } 
 
-function install_kubeadm_kubelet_kubectl
+install_kubeadm_kubelet_kubectl()
 {
 	log "Installing kubeadm, kubelet, kubectl.."
-	yum_install "kubelet-${KUBERNETES_VERSION} kubeadm-${KUBERNETES_VERSION} kubectl-${KEBERNETES_VERSION} --disableexcludes=kubernetes"
-	yum_update
+	#packageManager_install_ext "kubelet-${KUBERNETES_VERSION} kubeadm-${KUBERNETES_VERSION} kubectl-${KEBERNETES_VERSION} --disableexcludes=kubernetes"
+	if [[ "${DISTRO}" == "ubuntu" ]]; then
+		packageManager_install_ext "kubelet kubeadm kubectl"
+	else
+		packageManager_install_ext "kubelet kubeadm kubectl --disableexcludes=kubernetes"
+	fi
+	packageManager_update_ext
 	log "Enabling kubelet..."
-	exeCmd "systemctl enable kubelet"
+	exeFunc "enableService kubelet" "Failed to enable kubelet service" "Successfully enabled service"
 }
 
-function start_kubelet 
+start_kubelet()
 {
 	log "Starting kubelet..."
-	exeCmd "systemctl start kubelet"
+	exeFunc "startService kubelet" "Failed to start kubelet service" \
+		"Successfully started kubelet service"
 	log "Waiting for kubelet service to be active..."
-	wait_for_service_to_be_active "kubelet" 10 5
-	callStatus=$?
-	if (( ${callStatus} )); then
+	waitForServiceToBeActive kubelet 10 5
+	if (( $? )); then
 		abort "Kubelet failed to start within specified time limit."
 	else
 		log "Kubelet service started."
 	fi 
 }
 
-function log_start_setup
+log_start_setup()
 {
 	log "Kubernetes ${KNODE_TYPE} node setup started."
 } 
 
-function log_end_setup
+log_end_setup()
 {
 	log " " 
 	log "Kubernetes ${KNODE_TYPE} node setup completed."
 }
 
-function setup_common_items
+setup_common_items()
 {
 	if (( ${REINSTALL} == ${TRUE} )); then
 		prepare_system__add_admin_user
@@ -516,7 +401,7 @@ function setup_common_items
 	install_kubeadm_kubelet_kubectl
 }
 
-function setup_dashboard
+setup_dashboard()
 {
 	log "Setting up Kubernetes dashboard"
 	exeCmd_asAdminUser "kubectl create -f ${KUBERNETES_DASHBOARD_YAML_URL}"
@@ -525,13 +410,13 @@ function setup_dashboard
 	exeCmd_asAdminUser "kubectl patch svc kubernetes-dashboard --type=json -p "'"[{\"op\":\"replace\",\"path\":\"/spec/type\",\"value\":\"NodePort\"}]"'" --namespace=${KDASHBOARD_NAMESPACE}"
 }
 
-function get_dashboard_url_and_login_token
+get_dashboard_url_and_login_token()
 {
 	log " "
 	log "Getting kubernetes dashboard login url & token..."
 	local tmpFile="/tmp/${KDASHBOARD_LOGIN_INFO_FILE}"
-	exeCmd "cat /dev/null > ${tmpFile}"
-	exeCmd "chmod 666 ${tmpFile}"
+	cat /dev/null > ${tmpFile}
+	chmod 666 ${tmpFile}
 	echo "#" > ${tmpFile}
 	echo "# Kubernetes dashboard URL and login token" >> ${tmpFile}
 	echo "#" >> ${tmpFile}
@@ -548,7 +433,7 @@ function get_dashboard_url_and_login_token
 	log " "
 }
 
-function generate_slave_node_cluster_join_command
+generate_slave_node_cluster_join_command()
 {
 	cat /dev/null > ${KSLAVE_CLUSTER_JOIN_COMMNAD_FILE}
 	log " "
@@ -559,21 +444,21 @@ function generate_slave_node_cluster_join_command
 	log "Please copy this file over to the slave node before running Kubernetes slave node setup script."
 }
 
-function slave_node__join_cluster
+slave_node__join_cluster()
 {
 	log "Executing cluster join command..."
 	local clusterJoinCmdFile="${CURRENT_DIR}/${KSLAVE_CLUSTER_JOIN_COMMNAD_FILE}"
 	exeCmd "bash ${clusterJoinCmdFile}; if (( \$? )); then echo 'Failed to join the cluster'; else echo 'Successfully joined the cluster'; fi"
 }
 
-function read_data 
+read_data()
 {
 	local dataFile=${1}
 	read line < ${dataFile}
 	echo ${line} 
 }
 
-function read_file
+read_file()
 {
         local dataFile=${1}
         local line
@@ -584,7 +469,7 @@ function read_file
         echo ${fileData}
 } 
 
-function generate_kubeconfig_file
+generate_kubeconfig_file()
 {
 	local KADMIN_SERVICE_ACCOUNT_SECRET_NAME=""
 	local KADMIN_SERVICE_ACCOUNT_CERTIFICATE=""
@@ -628,7 +513,7 @@ function generate_kubeconfig_file
 	EOF
 }
 
-function setup_master_node
+setup_master_node()
 {
 	log_start_setup 
 	setup_common_items
@@ -665,39 +550,53 @@ function setup_master_node
 	log_end_setup 
 } 
 
-function get_slave_node_cluster_join_command
+get_slave_node_cluster_join_command()
 {
-	
 	if [ ! -f ${KSLAVE_CLUSTER_JOIN_COMMNAD_FILE} ]; then
 		clear
 		log " "
 		log "Slave node's cluster join command file not found."
-		log "Trying to copy the file from master node..."
-		scp root@${KMASTER_IP_ADDRESS}:/root/${KSLAVE_CLUSTER_JOIN_COMMNAD_FILE} . 
+		#log "Trying to copy the file from master node..."
+		if [[ "${DISTRO}" == "ubuntu" ]]; then
+			: ## TODO Implement	
+			abort "Auto copy of join command file not yet implemented.  Please copy the file & restart the install"
+		else
+			log "Trying to copy the file from master node..."
+			exeCmd "scp root@${KMASTER_IP_ADDRESS}:/root/${KSLAVE_CLUSTER_JOIN_COMMNAD_FILE} ."
+		fi
 		if (( $? )); then
 			abort "Failed to copy the salve node's cluster join command file from the master node."
 		fi
 	fi
 }
 
-function setup_slave_node
+setup_slave_node()
 {
 	log_start_setup 
 	get_slave_node_cluster_join_command
 	setup_common_items
+	if (( ${REINSTALL} == ${TRUE} )); then
+		log "Restting this slave node & removing prior cluster settings..."
+		exeCmd "kubeadm reset -f" \
+			"Failed to reset. This node may not be able to join cluster." \
+			"Sucessfully reset this node & removed prior cluster settings."
+	fi
 	slave_node__join_cluster 
 	start_kubelet
 	log_end_setup 
 }
 
-function prepare_for_reinstall
+prepare_for_reinstall()
 {
-	log "Disabling & stopping kubelet..."
-	exeCmd 'systemctl disable kubelet'
-	exeCmd 'systemctl stop kubelet'
-	sleep 3
+	log "Stopping kubelet..."
+	exeFunc "stopService kubelet" \ "Failed to stop kubelete service" \
+		"Successfully stopped kubelet service"
+	waitForServiceToBeInactive "kubelet" 5 3
+	if (( $? )); then 
+		abort "Kubelet service did not stop within alloted time."
+	fi
 	log "Removing kubenetes..."
-	exeCmd 'yum remove -y kube*'
+	packageManager_uninstall_ext "kubelet kubeadm kubectl" 
 	log "Stopping all kubernetes processes..."
 	[[ $(pgrep "master") ]]    && exeCmd 'pkill master'
 	[[ $(pgrep "kubelet") ]]   && exeCmd 'pkill kubelet'
@@ -709,15 +608,13 @@ function prepare_for_reinstall
 	else
 		log '  No containers to stop'
 	fi 
-	log "Removing all docker containers..."
-
+	log "Removing all docker containers..." 
 	if (( $(docker container ps -aq | wc -l) > 0 )); then
 		exeCmd 'docker container rm $(docker container ps -aq)'
 	else
 		log '  No containers to remove'
 	fi 
 	log "Removing all docker images..."
-
 	if (( $(docker images ls -aq | wc -l) > 0 )); then
 		exeCmd 'docker images rm $(docker images ls -aq)'
 	else
@@ -743,16 +640,17 @@ function prepare_for_reinstall
 
 # __main__ 
 
+enableLogging
 readonly OPTIONS=":bjsrt:n:i:a:cd:h"
 getopts "${OPTIONS}" opt ${@}
 case $opt in
 	b)
-		log_disable
+		disableLogging
 	       	load_setup_configuration
 		get_dashboard_url_and_login_token
 		;;
 	j)
-		log_disable
+		disableLogging
 	       	load_setup_configuration
 		generate_slave_node_cluster_join_command
 		;;
@@ -784,7 +682,7 @@ case $opt in
                                         logDir=${OPTARG}
                                         ;;
 				*)
-					show_usage "Invalid option(s) provided"
+					showUsage "Invalid option(s) provided"
                         esac
                 done 
 		KNODE_TYPE=${nodeType}
@@ -800,12 +698,10 @@ case $opt in
 		if [[ ! -z "${nodeUser}" ]]; then
 			KADMIN_USER=${nodeUser}
 		fi
-		LOG_TAG="K8S ${KNODE_TYPE} Setup"
-		if [[ ! -z "${logDir}" ]]; then
-			LOG_DIR=${logDir}
-		fi
-		LOG_FILE="${LOG_DIR}/setup-kuberntes-${KNODE_TYPE}.log"
-		new_log_file
+		setLogTag "K8S ${KNODE_TYPE} Setup"
+		setLogDirectory "${logDir:-$(pwd)}" 
+		setLogFileName "setup-k8s-${KNODE_TYPE}.log" 
+		newLogFile
 		if (( ${REINSTALL} == ${TRUE} )); then
 			prepare_for_reinstall
 		fi
@@ -817,12 +713,12 @@ case $opt in
 				setup_slave_node
 				;;
 			*)
-				show_usage "Invalid node type: ${nodeType}"
+				showUsage "Invalid node type: ${nodeType}"
 				;;
 		esac
 		;;
         h|*)
-                show_usage
+                showUsage
                 ;;
 esac 
 

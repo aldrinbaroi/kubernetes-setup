@@ -1,0 +1,8 @@
+aldrinbaroi,bash-lib,master,bash-lib-logging
+aldrinbaroi,bash-lib,master,bash-lib-execmd
+aldrinbaroi,bash-lib,master,bash-lib-system
+aldrinbaroi,bash-lib,master,bash-lib-user
+aldrinbaroi,bash-lib,master,bash-lib-selinux
+aldrinbaroi,bash-lib,master,bash-lib-service
+aldrinbaroi,bash-lib,master,bash-lib-firewall
+aldrinbaroi,bash-lib,master,bash-lib-package-manager
