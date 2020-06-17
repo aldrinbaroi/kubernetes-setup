@@ -16,6 +16,9 @@ containerNetworking_setup()
 		flannel)
 			flannel_setup
 			;;
+		cilium)
+			cilium_setup
+			;;
 		*)
 			log   "Unable to setup container networking [${_CONTAINER_NETWORKING_TYPE}]"
 			abort "Not yet implemented"
