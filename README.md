@@ -43,4 +43,4 @@ Setup worker node
 ```
 kubernetes-setup -s -t worker -n kworker1
 ```
-**Note:** Please make sure node name matches to what you defined in the config file.
+**Note:** Please make sure node name matches to what you have defined in the config file.
