@@ -28,7 +28,7 @@ readonly DEFAULT_CONTEXT_NAME="${DEFAULT_SERVICE_ACCOUNT}@${DEFAULT_CLUSTER_NAME
 readonly PREREQUISTE_PACKAGES="openssh-server socat"
 readonly NET_FILTER_MODULE_NAME="br_netfilter"
 readonly SETUP_CONFIG_FILE="kubernetes-setup.conf"
-readonly KSLAVE_CLUSTER_JOIN_COMMNAD_FILE="kworker-cluster-join-command"
+readonly KWORKER_CLUSTER_JOIN_COMMNAD_FILE="kworker-cluster-join-command"
 readonly KDASHBOARD_LOGIN_INFO_FILE="kubernetes-dashboard-login.info" 
 readonly KDASHBOARD_NAMESPACE="kubernetes-dashboard"
 
@@ -45,7 +45,7 @@ KNODE_NAME="${DEFAULT_KNODE_NAME}"
 KNODE_IFACE=""
 KNODE_IP=""
 KMASTER_NODE="notset"
-KSLAVE_NODES="notset"
+KWORKER_NODES="notset"
 
 KADMIN_SERVICE_ACCOUNT=
 CLUSTER_NAME=
@@ -424,19 +424,19 @@ get_dashboard_url_and_login_token()
 
 generate_worker_node_cluster_join_command()
 {
-	cat /dev/null > ${KSLAVE_CLUSTER_JOIN_COMMNAD_FILE}
+	cat /dev/null > ${KWORKER_CLUSTER_JOIN_COMMNAD_FILE}
 	log " "
 	log "Generating worker node's cluster join command..."
 	log "Worker node's cluster join command:\n"
-	exeCmd "kworkerJoinCmd=\$(kubeadm token create --print-join-command); echo \${kworkerJoinCmd} | tee ${KSLAVE_CLUSTER_JOIN_COMMNAD_FILE}"
-	log "\nThe join command has been saved in the ${KSLAVE_CLUSTER_JOIN_COMMNAD_FILE} file"
+	exeCmd "kworkerJoinCmd=\$(kubeadm token create --print-join-command); echo \${kworkerJoinCmd} | tee ${KWORKER_CLUSTER_JOIN_COMMNAD_FILE}"
+	log "\nThe join command has been saved in the ${KWORKER_CLUSTER_JOIN_COMMNAD_FILE} file"
 	log "Please copy this file over to the worker node before running Kubernetes worker node setup script."
 }
 
 worker_node__join_cluster()
 {
 	log "Executing cluster join command..."
-	local clusterJoinCmdFile="${CURRENT_DIR}/${KSLAVE_CLUSTER_JOIN_COMMNAD_FILE}"
+	local clusterJoinCmdFile="${CURRENT_DIR}/${KWORKER_CLUSTER_JOIN_COMMNAD_FILE}"
 	exeCmd "bash ${clusterJoinCmdFile}; if (( \$? )); then echo 'Failed to join the cluster'; else echo 'Successfully joined the cluster'; fi"
 }
 
@@ -538,7 +538,7 @@ setup_master_node()
 
 get_worker_node_cluster_join_command()
 {
-	if [ ! -f ${KSLAVE_CLUSTER_JOIN_COMMNAD_FILE} ]; then
+	if [ ! -f ${KWORKER_CLUSTER_JOIN_COMMNAD_FILE} ]; then
 		clear
 		log " "
 		log "Worker node's cluster join command file not found."
@@ -548,7 +548,7 @@ get_worker_node_cluster_join_command()
 			abort "Auto copy of join command file not yet implemented.  Please copy the file & restart the install"
 		else
 			log "Trying to copy the file from master node..."
-			exeCmd "scp root@${KMASTER_IP_ADDRESS}:/root/${KSLAVE_CLUSTER_JOIN_COMMNAD_FILE} ."
+			exeCmd "scp root@${KMASTER_IP_ADDRESS}:/root/${KWORKER_CLUSTER_JOIN_COMMNAD_FILE} ."
 		fi
 		if (( $? )); then
 			abort "Failed to copy the salve node's cluster join command file from the master node."
