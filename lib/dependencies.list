@@ -11,3 +11,4 @@ lib/cri/container-runtime-docker
 lib/cni/container-networking-setup
 lib/cni/container-networking-calico
 lib/cni/container-networking-flannel
+lib/cni/container-networking-cilium
