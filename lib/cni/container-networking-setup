@@ -1,0 +1,36 @@
+#!/bin/bash 
+#
+# Script to setup container networking
+#
+# Depends on:
+#  1. container-networking-calico
+# 
+
+containerNetworking_setup()
+{
+	local _CONTAINER_NETWORKING_TYPE=$1
+	case ${_CONTAINER_NETWORKING_TYPE} in
+		calico)
+			calico_setup
+			;;
+		flannel)
+			flannel_setup
+			;;
+		*)
+			log   "Unable to setup container networking [${_CONTAINER_NETWORKING_TYPE}]"
+			abort "Not yet implemented"
+			;;
+	esac
+}
+
+containerNetworking_prepare_for_reinstall()
+{
+	local _CONTAINER_NETWORKING_TYPE=$1
+	case ${_CONTAINER_NETWORKING_TYPE} in
+		*)
+			:  # Nothing to do 
+			;;
+	esac 
+}
+
+#::END::

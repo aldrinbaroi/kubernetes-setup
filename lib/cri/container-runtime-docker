@@ -1,0 +1,62 @@
+#!/bin/bash 
+#
+# Script to install docker container runtime
+#
+# Depends on
+#  1. bash-lib-loging
+#  2. bash-lib-cmdexe
+#  3. bash-lib-service
+# 
+
+docker_install()
+{
+	readonly DISTRO=$(getDistroType)
+	if [[ "${DISTRO}" == "ubuntu" ]]; then
+		DOCKER_PKG_NAME="docker.io"
+	else
+		DOCKER_PKG_NAME="docker"
+	fi
+	log " "
+	log "Installing & starting Docker..."
+	packageManager_install_ext "${DOCKER_PKG_NAME}"
+	exeFunc "enableService docker" "Failed to enable docker service" "Enabled docker service"
+	exeFunc "startService docker" "Failed to start docker service" "Starting docker service"
+	log "Waiting for docker service to be active..."
+	waitForServiceToBeActive docker 5 3
+	if (( $? )); then
+		abort "Docker failed to start within specified time limit."
+	else
+		log "Docker service started."
+	fi
+}
+
+docker_prepare_for_reinstall()
+{
+	log "Preparing docker for reinstall..."
+        log "Stopping all docker containers..."
+        if (( $(docker container ps -aq | wc -l) > 0 )); then
+                exeCmd 'docker container stop $(docker container ps -aq)'
+        else
+                log '  No containers to stop'
+        fi
+        log "Removing all docker containers..."
+        if (( $(docker container ps -aq | wc -l) > 0 )); then
+                exeCmd 'docker container rm $(docker container ps -aq)'
+        else
+                log '  No containers to remove'
+        fi
+        log "Removing all docker images..."
+        if (( $(docker images ls -aq | wc -l) > 0 )); then
+                exeCmd 'docker images rm $(docker images ls -aq)'
+        else
+                log '  No images to remove'
+        fi
+        log "Removing all docker volumes..."
+        if (( $(docker volume ls -q | wc -l) > 0 )); then
+                exeCmd 'docker volume rm $(docker volume ls -q)'
+        else
+                log '  No volumes to remove'
+        fi 
+}
+
+#::END::

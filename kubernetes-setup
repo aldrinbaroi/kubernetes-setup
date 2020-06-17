@@ -1,6 +1,6 @@
 #!/bin/bash 
 #
-# Script to setup Kubernetes master & slave 
+# Script to setup Kubernetes master & worker 
 #
 # author: Aldrin Baroi
 # 
@@ -9,11 +9,14 @@
 source lib/dependency-manager
 
 readonly DISTRO=$(getDistroType)
-if [[ "${DISTRO}" == "ubuntu" ]]; then
-	DOCKER_PKG_NAME="docker.io"
-else
-	DOCKER_PKG_NAME="docker"
-fi
+case "${DISTRO}" in
+	ubuntu|centos|redhat)
+		:
+		;;
+	*)
+		abort "[${DISTRO}] not yet supported"
+		;;
+esac
 
 readonly CURRENT_DIR="$(pwd)"
 
@@ -25,7 +28,7 @@ readonly DEFAULT_CONTEXT_NAME="${DEFAULT_SERVICE_ACCOUNT}@${DEFAULT_CLUSTER_NAME
 readonly PREREQUISTE_PACKAGES="openssh-server socat"
 readonly NET_FILTER_MODULE_NAME="br_netfilter"
 readonly SETUP_CONFIG_FILE="kubernetes-setup.conf"
-readonly KSLAVE_CLUSTER_JOIN_COMMNAD_FILE="kslave-cluster-join-command"
+readonly KSLAVE_CLUSTER_JOIN_COMMNAD_FILE="kworker-cluster-join-command"
 readonly KDASHBOARD_LOGIN_INFO_FILE="kubernetes-dashboard-login.info" 
 readonly KDASHBOARD_NAMESPACE="kubernetes-dashboard"
 
@@ -66,16 +69,17 @@ showUsage()
         echo " "
         echo "kubernetes-setup usage:"
         echo " "
-	echo "  kubernetes-setup -b | -j | [-s|-r] SETUP_OPTIONS | -h"
+	echo "  kubernetes-setup -b [-s] | -j | [-s|-r] SETUP_OPTIONS | -h"
         echo " "
-	echo "    -b     Get Kubenetes dashboard URL & login token"
-	echo "    -j     Get slave node's cluster join command"
-	echo "    -s|-r  Setup/reinstall Kubernetes node (master|slave)"
-        echo "    -h     Show this usage text"
+	echo "    -b      Get dashboard URL & login token"
+	echo "            -s Setup dashboard & dashboard URL & login token"
+	echo "    -j      Get worker node's cluster join command"
+	echo "    -s|-r   Setup/reinstall Kubernetes node (master|worker)"
+        echo "    -h      Show this usage text"
         echo " "
         echo "    SETUP_OPTIONS: -t node-type [-n node-name] [-i node-iface -a node-ip] [-c] [-d log-dir]"
         echo " "
-        echo "      -t node-type    Kubernetes node type [master|slave]"
+        echo "      -t node-type    Kubernetes node type [master|worker]"
 	echo "      -n node-name    Kubernetes node's host name (override config file)"
 	echo "      -i node-iface   Kubernetes node's network interface name (changes node's IP address)"
 	echo "      -a node-ip      IP address & netmask  Ex:  172.16.0.2/255.255.0.0"
@@ -218,7 +222,7 @@ prepare_system__install_required_tools()
 prepare_system__update_hosts_file()
 {
 	log " "
-	log "Updating [/etc/hosts] file with k8s master & slave node names..."
+	log "Updating [/etc/hosts] file with k8s master & worker node names..."
 	local hostName
 	local hostShortName
 	local hostIp
@@ -304,23 +308,6 @@ install_prerequisite_packages()
 	packageManager_install_ext "${PREREQUISTE_PACKAGES}" 
 }
 
-install_docker()
-{
-	local callStatus
-	log " "
-	log "Installing & starting Docker..."
-	packageManager_install_ext "${DOCKER_PKG_NAME}"
-	exeFunc "enableService docker" "Failed to enable docker service" "Enabled docker service" 
-	exeFunc "startService docker" "Failed to start docker service" "Starting docker service" 
-	log "Waiting for docker service to be active..."
-	waitForServiceToBeActive docker 5 3
-	if (( $? )); then
-		abort "Docker failed to start within specified time limit." 
-	else
-		log "Docker service started."
-	fi
-} 
-
 setup_kubernetes_repository()
 {
 	log " "
@@ -352,7 +339,6 @@ setup_kubernetes_repository()
 install_kubeadm_kubelet_kubectl()
 {
 	log "Installing kubeadm, kubelet, kubectl.."
-	#packageManager_install_ext "kubelet-${KUBERNETES_VERSION} kubeadm-${KUBERNETES_VERSION} kubectl-${KEBERNETES_VERSION} --disableexcludes=kubernetes"
 	if [[ "${DISTRO}" == "ubuntu" ]]; then
 		packageManager_install_ext "kubelet kubeadm kubectl"
 	else
@@ -390,13 +376,16 @@ log_end_setup()
 
 setup_common_items()
 {
+	log "Setting up common items..."
 	if (( ${REINSTALL} == ${TRUE} )); then
 		prepare_system__add_admin_user
 	else
+		setup_kubernetes_repository
 		prepare_system
 		install_prerequisite_packages
-		install_docker
-		setup_kubernetes_repository
+		log " "
+		log "Installing & starting container runtime..."
+		containerRuntime_install ${CONTAINER_RUNTIME}
 	fi
 	install_kubeadm_kubelet_kubectl
 }
@@ -433,18 +422,18 @@ get_dashboard_url_and_login_token()
 	log " "
 }
 
-generate_slave_node_cluster_join_command()
+generate_worker_node_cluster_join_command()
 {
 	cat /dev/null > ${KSLAVE_CLUSTER_JOIN_COMMNAD_FILE}
 	log " "
-	log "Generating slave node's cluster join command..."
-	log "Slave node's cluster join command:\n"
-	exeCmd "kslaveJoinCmd=\$(kubeadm token create --print-join-command); echo \${kslaveJoinCmd} | tee ${KSLAVE_CLUSTER_JOIN_COMMNAD_FILE}"
+	log "Generating worker node's cluster join command..."
+	log "Worker node's cluster join command:\n"
+	exeCmd "kworkerJoinCmd=\$(kubeadm token create --print-join-command); echo \${kworkerJoinCmd} | tee ${KSLAVE_CLUSTER_JOIN_COMMNAD_FILE}"
 	log "\nThe join command has been saved in the ${KSLAVE_CLUSTER_JOIN_COMMNAD_FILE} file"
-	log "Please copy this file over to the slave node before running Kubernetes slave node setup script."
+	log "Please copy this file over to the worker node before running Kubernetes worker node setup script."
 }
 
-slave_node__join_cluster()
+worker_node__join_cluster()
 {
 	log "Executing cluster join command..."
 	local clusterJoinCmdFile="${CURRENT_DIR}/${KSLAVE_CLUSTER_JOIN_COMMNAD_FILE}"
@@ -520,42 +509,39 @@ setup_master_node()
 
 	log " "
 	log "Initiating cluster..."
-	exeCmd "kubeadm init --pod-network-cidr=${CALICO_NETWORK_CIDR} --apiserver-advertise-address=${KMASTER_IP_ADDRESS}"
-	
+	exeCmd "kubeadm init --pod-network-cidr=${CONTAINER_NETWORKING_CIDR} --apiserver-advertise-address=${KMASTER_IP_ADDRESS}" 
 	log " "
 	log "Setting up KADMIN_USER (${KADMIN_USER}) environment to be able to use kubectl command"
 	exeCmd_asAdminUser "mkdir -p ${KADMIN_USER_HOME}/.kube"
 	exeCmd "cp /etc/kubernetes/admin.conf ${KADMIN_USER_HOME}/.kube/config"
-	exeCmd "chown -R ${KADMIN_USER}:${KADMIN_USER_GROUP} /home/${KADMIN_USER}/.kube/config"
-
+	exeCmd "chown -R ${KADMIN_USER}:${KADMIN_USER_GROUP} /home/${KADMIN_USER}/.kube/config" 
 	log " "
 	log "Creating service account [${KADMIN_SERVICE_ACCOUNT}]..."
 	exeCmd_asAdminUser "kubectl create serviceaccount ${KADMIN_SERVICE_ACCOUNT} -n default"
 	log "Adding cluster admin role binding rule..."
-	exeCmd_asAdminUser "kubectl create clusterrolebinding cluster-admin-role -n default --clusterrole=cluster-admin --serviceaccount=default:${KADMIN_SERVICE_ACCOUNT}"
-
+	exeCmd_asAdminUser "kubectl create clusterrolebinding cluster-admin-role -n default --clusterrole=cluster-admin --serviceaccount=default:${KADMIN_SERVICE_ACCOUNT}" 
 	log " "
 	log "Generating kubeconfig file..."
-	generate_kubeconfig_file
-	
+	generate_kubeconfig_file 
 	log " "
-	log "Setting up POD network"
-	exeCmd_asAdminUser "kubectl apply -f ${CALICO_YAML_URL}" 
+	log "Setting up container networking. Type: ${CONTAINER_NETWORKING_TYPE}"
+	containerNetworking_setup ${CONTAINER_NETWORKING_TYPE}
+	log "Starting kubelet..."
 	start_kubelet 
 	if (( ${SETUP_DASHBOARD} == ${TRUE} )); then
 		setup_dashboard
 		get_dashboard_url_and_login_token
 	fi
-	generate_slave_node_cluster_join_command 
+	generate_worker_node_cluster_join_command 
 	log_end_setup 
 } 
 
-get_slave_node_cluster_join_command()
+get_worker_node_cluster_join_command()
 {
 	if [ ! -f ${KSLAVE_CLUSTER_JOIN_COMMNAD_FILE} ]; then
 		clear
 		log " "
-		log "Slave node's cluster join command file not found."
+		log "Worker node's cluster join command file not found."
 		#log "Trying to copy the file from master node..."
 		if [[ "${DISTRO}" == "ubuntu" ]]; then
 			: ## TODO Implement	
@@ -570,18 +556,18 @@ get_slave_node_cluster_join_command()
 	fi
 }
 
-setup_slave_node()
+setup_worker_node()
 {
 	log_start_setup 
-	get_slave_node_cluster_join_command
+	get_worker_node_cluster_join_command
 	setup_common_items
 	if (( ${REINSTALL} == ${TRUE} )); then
-		log "Restting this slave node & removing prior cluster settings..."
+		log "Restting this worker node & removing prior cluster settings..."
 		exeCmd "kubeadm reset -f" \
 			"Failed to reset. This node may not be able to join cluster." \
 			"Sucessfully reset this node & removed prior cluster settings."
 	fi
-	slave_node__join_cluster 
+	worker_node__join_cluster 
 	start_kubelet
 	log_end_setup 
 }
@@ -602,30 +588,11 @@ prepare_for_reinstall()
 	[[ $(pgrep "kubelet") ]]   && exeCmd 'pkill kubelet'
 	[[ $(pgrep "kube-api") ]]  && exeCmd 'pkill "kube-api*"'
 	[[ $(pgrep "etcd") ]]      && exeCmd 'pkill etcd'
-	log "Stopping all docker containers..." 
-	if (( $(docker container ps -aq | wc -l) > 0 )); then
-		exeCmd 'docker container stop $(docker container ps -aq)'
-	else
-		log '  No containers to stop'
-	fi 
-	log "Removing all docker containers..." 
-	if (( $(docker container ps -aq | wc -l) > 0 )); then
-		exeCmd 'docker container rm $(docker container ps -aq)'
-	else
-		log '  No containers to remove'
-	fi 
-	log "Removing all docker images..."
-	if (( $(docker images ls -aq | wc -l) > 0 )); then
-		exeCmd 'docker images rm $(docker images ls -aq)'
-	else
-		log '  No images to remove'
-	fi 
-	log "Removing all docker volumes..."
-	if (( $(docker volume ls -q | wc -l) > 0 )); then
-		exeCmd 'docker volume rm $(docker volume ls -q)'
-	else
-		log '  No volumes to remove'
-	fi 
+
+	log " "
+	log "Preparing container runtime  for reinstall..."
+	containerRuntime_prepare_for_reinstall ${CONTAINER_RUNTIME}
+
 	log "Unmounting all kubenetes tmpfs mounts..."
 	if [[ $(mount -l -t tmpfs | grep kube | wc -l) > 0 ]]; then
 		exeCmd 'mount -l -t tmpfs | grep kube | awk '"'"'{print $3}'"'"' | xargs -l umount -t tmpfs'
@@ -645,14 +612,24 @@ readonly OPTIONS=":bjsrt:n:i:a:cd:h"
 getopts "${OPTIONS}" opt ${@}
 case $opt in
 	b)
-		disableLogging
-	       	load_setup_configuration
-		get_dashboard_url_and_login_token
+		getopts "s" opt ${@}
+		case $opt in
+			s)
+	       			load_setup_configuration
+				setup_dashboard
+				get_dashboard_url_and_login_token
+				;;
+			*)
+				disableLogging
+	       			load_setup_configuration
+				get_dashboard_url_and_login_token
+				;;
+		esac
 		;;
 	j)
 		disableLogging
 	       	load_setup_configuration
-		generate_slave_node_cluster_join_command
+		generate_worker_node_cluster_join_command
 		;;
 	r|s)
 	       	load_setup_configuration
@@ -709,8 +686,8 @@ case $opt in
 			master)
 				setup_master_node
 				;;
-			slave)
-				setup_slave_node
+			worker)
+				setup_worker_node
 				;;
 			*)
 				showUsage "Invalid node type: ${nodeType}"

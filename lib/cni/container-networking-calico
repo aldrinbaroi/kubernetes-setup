@@ -1,0 +1,17 @@
+#!/bin/bash 
+#
+# Script to setup container networking using Calico
+#
+# Depends on
+#  1. bash-lib-loging
+#  2. bash-lib-cmdexe
+# 
+
+calico_setup()
+{
+	local CALICO_YAML_URL="https://docs.projectcalico.org/${CALICO_VERSION}/manifests/calico.yaml" 
+	exeCmd_asAdminUser "kubectl apply -f ${CALICO_YAML_URL}" 
+}
+
+
+#::END::

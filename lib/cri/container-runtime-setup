@@ -1,0 +1,37 @@
+#!/bin/bash 
+#
+# Script to install container runtime
+#
+# Depends on:
+#  1. container_runtime_docker
+# 
+
+containerRuntime_install()
+{
+	local _CONTAINER_RUNTIME=$1
+	case ${_CONTAINER_RUNTIME} in
+		docker)
+			docker_install
+			;;
+		*)
+			log   "Unable to install container runtime [${_CONTAINER_RUNTIME}]"
+			abort "Not yet implemented"
+			;;
+	esac
+}
+
+containerRuntime_prepare_for_reinstall()
+{
+	local _CONTAINER_RUNTIME=$1
+	case ${_CONTAINER_RUNTIME} in
+		docker)
+			docker_prepare_for_reinstall
+			;;
+		*)
+			log   "Unable to prepare container runtime [${_CONTAINER_RUNTIME}] for reinstall."
+			abort " Not yet implemented"
+			;;
+	esac 
+}
+
+#::END::

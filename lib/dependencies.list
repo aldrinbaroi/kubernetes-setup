@@ -6,3 +6,8 @@ aldrinbaroi,bash-lib,0.4,bash-lib-selinux
 aldrinbaroi,bash-lib,0.4,bash-lib-service
 aldrinbaroi,bash-lib,0.4,bash-lib-firewall
 aldrinbaroi,bash-lib,0.4,bash-lib-package-manager
+lib/cri/container-runtime-setup
+lib/cri/container-runtime-docker
+lib/cni/container-networking-setup
+lib/cni/container-networking-calico
+lib/cni/container-networking-flannel
