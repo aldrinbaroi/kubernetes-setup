@@ -7,13 +7,13 @@ kubernetes-setup -b [-s] | -j | (-s|-r) SETUP_OPTIONS | -h
          
 -b     Get Kubenetes dashboard URL & login token only
        -s Setup dashboard & get dashboard URL & login token
--j     Get slave node's cluster join command
--s|-r  Setup/reinstall kubernetes node (master|slave)
+-j     Get worker node's cluster join command
+-s|-r  Setup/reinstall kubernetes node (master|worker)
 -h     Show this usage text
          
 SETUP_OPTIONS: -t node-type [-n node-name] [-i node-iface -a node-ip] [-c] [-d log-dir]
          
--t node-type    Kubernetes node type [master|slave]
+-t node-type    Kubernetes node type [master|worker]
 -n node-name    Kubernetes node's host name
 -i node-iface   Kubernetes node's network interface name
 -a node-ip      IP address & netmask  Ex:  172.16.0.2/255.255.0.0
@@ -26,7 +26,7 @@ Change the following to match your setup:
 
 KMASTER_IP_ADDRESS  Master node's IP address
 KMASTER_NODE        Master node's IP address, hostname, short hostname
-KSLAVE_NODES        List of slave nodes' IP address, hostname, short hostname
+KWORKER_NODES       List of worker nodes' IP address, hostname, short hostname
 KADMIN_USER         Admin user's login ID
 KADMIN_PASSWORD     Admin user's login password
 ```
@@ -39,8 +39,8 @@ Setup master node
 ```
 kubernetes-setup -s -t master -n kmaster
 ```
-Setup slave node
+Setup worker node
 ```
-kubernetes-setup -s -t slave -n kslave1
+kubernetes-setup -s -t worker -n kworker1
 ```
 **Note:** Please make sure node name matches to what you defined in the config file.
