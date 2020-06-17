@@ -3,9 +3,10 @@ Script to setup Kubernetes cluster on ***CentOS 7 & Ubuntu***
 
 **kubernetes-setup usage:**
 ```      
-kubernetes-setup -b | -j | [-s|-r] SETUP_OPTIONS | -h
+kubernetes-setup -b [-s] | -j | (-s|-r) SETUP_OPTIONS | -h
          
--b     Get Kubenetes dashboard URL & login token
+-b     Get Kubenetes dashboard URL & login token only
+       -s Setup dashboard & get dashboard URL & login token
 -j     Get slave node's cluster join command
 -s|-r  Setup/reinstall kubernetes node (master|slave)
 -h     Show this usage text
