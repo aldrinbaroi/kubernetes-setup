@@ -33,7 +33,7 @@ __loadDependencies()
 			! [[ "${line}" =~ ^([[:print:]]+)$ ]] && continue
 			fileName=${dependencyRec[0]}
 			if [ -f "${fileName}" ]; then
-				 echo "Loading dependency: ${fileName}"
+				echo "Loading dependency: ${fileName}"
 				source "${fileName}"
 			else
 				echo "Failed to load dependency: ${fileName}."
@@ -61,7 +61,7 @@ __loadDependencies()
 					exit 1
 				fi
 			fi
-			 echo "Loading dependency: ${fileName}"
+			echo "Loading dependency: ${fileName}"
 			source "lib/${fileName}"
 		else
 			continue

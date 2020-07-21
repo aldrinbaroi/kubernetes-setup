@@ -10,8 +10,8 @@
 
 docker_install()
 {
-	readonly DISTRO=$(getDistroType)
-	if [[ "${DISTRO}" == "ubuntu" ]]; then
+	local _DISTRO=$(getDistroType)
+	if [[ "${_DISTRO}" == "ubuntu" ]]; then
 		DOCKER_PKG_NAME="docker.io"
 	else
 		DOCKER_PKG_NAME="docker"

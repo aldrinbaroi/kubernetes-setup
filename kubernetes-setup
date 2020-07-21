@@ -525,7 +525,7 @@ setup_master_node()
 	generate_kubeconfig_file 
 	log " "
 	log "Setting up container networking. Type: ${CONTAINER_NETWORKING_TYPE}"
-	containerNetworking_setup ${CONTAINER_NETWORKING_TYPE}
+	containerNetworking_install ${CONTAINER_NETWORKING_TYPE}
 	log "Starting kubelet..."
 	start_kubelet 
 	if (( ${SETUP_DASHBOARD} == ${TRUE} )); then

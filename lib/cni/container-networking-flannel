@@ -1,16 +1,16 @@
 #!/bin/bash 
 #
-# Script to setup container networking using Flannel
+# Script to install container networking using Flannel
 #
 # Depends on
 #  1. bash-lib-loging
 #  2. bash-lib-cmdexe
 # 
 
-flannel_setup()
+flannel_install()
 {
 	local FLANNEL_YAML_URL="https://raw.githubusercontent.com/coreos/flannel/${FLANNEL_VERSION}/Documentation/kube-flannel.yml" 
-	exeCmd_asAdminUser "kubectl apply -f ${FLANNEL_YAML_URL}" 
+	exeCmd_asAdminUser "kubectl apply -f ${FLANNEL_YAML_URL}"
 }
 
 

@@ -1,16 +1,16 @@
 #!/bin/bash 
 #
-# Script to setup container networking using Cilium
+# Script to install container networking using Cilium
 #
 # Depends on
 #  1. bash-lib-loging
 #  2. bash-lib-cmdexe
 # 
 
-cilium_setup()
+cilium_install()
 {
 	local CILIUM_YAML_URL="https://raw.githubusercontent.com/cilium/cilium/${CILIUM_VERSION}/install/kubernetes/quick-install.yaml"
-	exeCmd_asAdminUser "kubectl apply -f ${CILIUM_YAML_URL}" 
+	exeCmd_asAdminUser "kubectl apply -f ${CILIUM_YAML_URL}"
 }
 
 

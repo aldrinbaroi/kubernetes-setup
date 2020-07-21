@@ -3,35 +3,42 @@
 # Script to install container runtime
 #
 # Depends on:
-#  1. container_runtime_docker
+#  1. bash-lib-logging
+#  2. bash-lib-execmd
 # 
 
 containerRuntime_install()
 {
 	local _CONTAINER_RUNTIME=$1
-	case ${_CONTAINER_RUNTIME} in
-		docker)
-			docker_install
-			;;
-		*)
-			log   "Unable to install container runtime [${_CONTAINER_RUNTIME}]"
-			abort "Not yet implemented"
-			;;
-	esac
+	local func="${_CONTAINER_RUNTIME}_install"
+	if (( $(isFunction ${func}) )); then
+		${func}
+		if (( $? )); then
+			abort "Unable to install container runtime [${_CONTAINER_RUNTIME}]" 
+		else
+			log "Successfully installed container runtime [${_CONTAINER_RUNTIME}]" 
+		fi
+	else
+		log   "Unable to install container runtime [${_CONTAINER_RUNTIME}]"
+		abort "Not yet implemented"
+	fi
 }
 
 containerRuntime_prepare_for_reinstall()
 {
 	local _CONTAINER_RUNTIME=$1
-	case ${_CONTAINER_RUNTIME} in
-		docker)
-			docker_prepare_for_reinstall
-			;;
-		*)
-			log   "Unable to prepare container runtime [${_CONTAINER_RUNTIME}] for reinstall."
-			abort " Not yet implemented"
-			;;
-	esac 
+	local func="${_CONTAINER_RUNTIME}_prepare_for_reinstall"
+	if (( $(isFunction ${func}) )); then
+		${func}
+		if (( $? )); then
+			abort "Failed to prepare container runtime [${_CONTAINER_RUNTIME}] for reinstallation." 
+		else
+			log "Successfully prepared container runtime [${_CONTAINER_RUNTIME}] for reinstallation." 
+		fi
+	else
+		log   "Unable to prepare container runtime [${_CONTAINER_RUNTIME}] for reinstall."
+		abort "Not yet implemented"
+	fi
 }
 
 #::END::

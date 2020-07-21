@@ -1,39 +1,32 @@
 #!/bin/bash 
 #
-# Script to setup container networking
+# Script to install container networking
 #
 # Depends on:
-#  1. container-networking-calico
-# 
+# 1. bash-lib-logging
+# 2. bash-lib-execmd
+#
 
-containerNetworking_setup()
+containerNetworking_install()
 {
 	local _CONTAINER_NETWORKING_TYPE=$1
-	case ${_CONTAINER_NETWORKING_TYPE} in
-		calico)
-			calico_setup
-			;;
-		flannel)
-			flannel_setup
-			;;
-		cilium)
-			cilium_setup
-			;;
-		*)
-			log   "Unable to setup container networking [${_CONTAINER_NETWORKING_TYPE}]"
-			abort "Not yet implemented"
-			;;
-	esac
+	local func="${_CONTAINER_NETWORKING_TYPE}_install"
+	if (( $(isFunction ${func}) )); then
+		${func}
+		if (( $? )); then
+			abort "Failed to install [${_CONTAINER_NETWORKING_TYPE}] container networking" 
+		else
+			log "Successfully installed [${_CONTAINER_NETWORKING_TYPE}] container networking" 
+		fi
+	else
+		log   "Unable to install container networking [${_CONTAINER_NETWORKING_TYPE}]"
+		abort "Not yet implemented"
+	fi 
 }
 
 containerNetworking_prepare_for_reinstall()
 {
-	local _CONTAINER_NETWORKING_TYPE=$1
-	case ${_CONTAINER_NETWORKING_TYPE} in
-		*)
-			:  # Nothing to do 
-			;;
-	esac 
+	:  # Nothing to do 
 }
 
 #::END::

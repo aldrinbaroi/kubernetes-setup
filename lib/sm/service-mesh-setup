@@ -1,0 +1,30 @@
+#!/bin/bash 
+#
+# Script to install a service mesh
+#
+
+serviceMesh_install()
+{
+	local _SERVICE_MESH_TYPE=$1
+	local func="${_SERVICE_MESH_TYPE}_install"
+	if (( $(type -f ${func}) )); then
+		log   "Unable to install [${_SERVICE_MESH_TYPE}] service mesh"
+		abort "Not yet implemented"
+	else
+		${func}
+	fi
+}
+
+serviceMesh_uninstall()
+{
+	local _SERVICE_MESH_TYPE=$1
+	local func="${_SERVICE_MESH_TYPE}_uninstall"
+	if (( $(type -f ${func}) )); then
+		log   "Unable to uninstall [${_SERVICE_MESH_TYPE}] service mesh"
+		abort "Not yet implemented"
+	else
+		${func}
+	fi
+}
+
+#::END::

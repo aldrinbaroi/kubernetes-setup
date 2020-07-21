@@ -1,0 +1,34 @@
+#!/bin/bash 
+#
+# Script to install Linkerd service mesh
+#
+# Depends on
+#  1. bash-lib-loging
+#  2. bash-lib-cmdexe
+#  3. kubernetes-setup-utils
+# 
+
+linkerd_install()
+{
+	log "Installing Linkerd CLI module..."
+	exeCmd_asAdmin "curl -sL https://run.linkerd.io/install | sh" \
+			"Failed to install Linkerd CLI module" \
+			"Successfully installed Linkerd CLI module"
+	log "Running pre-installation checkes..."
+	exeCmd_asAdmin "linkerd check --pre"
+	log "Installing Linkerd into cluster..."
+	exeCmd_asAdmin "linkerd install | kubectl apply -f -" \
+			"Failed to install Linkerd."
+	log "Waiting for Linkerd install to complete and become active..."
+	exeCmd_asAdmin "linkerd check" \
+			"ERROR: Linkerd installation encountered errors" \
+			"Successfully installed Linkerd service mesh" 
+	
+}
+
+linkerd_uninstall()
+{
+	exeCmd "linkerd install --ignore-cluster | kubectl delete -f -"
+}
+
+#::END::
